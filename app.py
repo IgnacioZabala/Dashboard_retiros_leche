@@ -8,7 +8,16 @@ import io
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
 st.title("Panel de Recolección y Liquidación por Tambo")
 
-# --- FUNCIÓN PARA GENERAR EL PDF (LOGO CENTRADO Y SIN TEXTO EXTRA) ---
+# --- CONFIGURACIÓN DE GOOGLE DRIVE ---
+# Reemplaza 'TU_ID_DE_ARCHIVO' con el código largo que aparece en el enlace de compartir de tu Google Drive
+FILE_ID = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
+url_drive = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
+
+@st.cache_data(ttl=60)
+def cargar_datos_drive(url):
+    return pd.read_excel(url, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
+
+# --- FUNCIÓN PARA GENERAR EL PDF ---
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp):
     pdf = FPDF()
     pdf.add_page()
@@ -16,20 +25,19 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     # --- LOGO CENTRADO ---
     ruta_logo = "logo.png"
     if os.path.exists(ruta_logo):
-        # Logo centrado arriba
         pdf.image(ruta_logo, x=80, y=10, w=50)
-        pdf.set_y(48) # Posición debajo del logo para continuar el documento
+        pdf.set_y(48) 
     else:
         pdf.set_y(15)
     
-    # --- TÍTULO CENTRADO (SIN EL TEXTO DE COOPAGRO) ---
+    # --- TÍTULO CENTRADO ---
     pdf.set_font('Arial', 'B', 12)
     pdf.set_text_color(100, 100, 100)
     pdf.cell(0, 6, 'Resumen semanal de recoleccion', ln=True, align='C')
     
-    pdf.set_text_color(0, 0, 0) # Volver a texto negro
+    pdf.set_text_color(0, 0, 0) 
     pdf.ln(4)
-    pdf.line(15, pdf.get_y(), 195, pdf.get_y()) # Línea divisoria elegante
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y()) 
     
     # --- DATOS DEL PRODUCTOR ---
     pdf.ln(6)
@@ -83,122 +91,127 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
         
     return bytes(pdf.output(dest='S'), encoding='latin-1')
 
-# --- CARGA DEL ARCHIVO ---
-uploaded_file = st.file_uploader("Sube tu archivo 'Resumen planilla Recibo  OD-PRO-03.xlsx'", type=["xlsx"])
+# --- CARGA Y PROCESAMIENTO DE DATOS ---
+if FILE_ID == "TU_ID_DE_ARCHIVO":
+    st.warning("⚠️ Por favor, configura el **FILE_ID** de tu Google Drive en el código de la aplicación para comenzar a leer los datos automáticamente.")
+else:
+    try:
+        df_raw = cargar_datos_drive(url_drive)
+        df = df_raw.copy()
+        df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
+        df = df.dropna(subset=['Fecha'])
+        df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
+        df = df.dropna(subset=['Fecha']) 
+        
+        # Agrupación por Ciclo Operativo (Sábado a Viernes)
+        df['Fecha_Cierre_Viernes'] = df['Fecha'] + pd.to_timedelta((4 - df['Fecha'].dt.weekday) % 7, unit='D')
+        df['Fecha_Inicio_Sabado'] = df['Fecha_Cierre_Viernes'] - pd.Timedelta(days=6)
+        
+        df['Ciclo_Semana'] = df.apply(lambda r: f"Viernes {r['Fecha_Cierre_Viernes'].strftime('%d/%m/%Y')} (Sab {r['Fecha_Inicio_Sabado'].strftime('%d/%m/%Y')} al Vie {r['Fecha_Cierre_Viernes'].strftime('%d/%m/%Y')})", axis=1)
+        
+        # --- BARRA LATERAL ---
+        st.sidebar.header("Filtros de Reporte")
+        
+        ciclos_disponibles = df[['Fecha_Cierre_Viernes', 'Ciclo_Semana']].drop_duplicates().sort_values('Fecha_Cierre_Viernes', ascending=False)['Ciclo_Semana'].tolist()
+        ciclo_seleccionado = st.sidebar.selectbox("1. Selecciona el Cierre de Semana (Viernes):", ciclos_disponibles)
+        
+        df_semana_actual = df[df['Ciclo_Semana'] == ciclo_seleccionado]
+        
+        mapeo_tambos = df_semana_actual[['Tambo', 'Num_Tambo']].dropna().drop_duplicates()
+        mapeo_tambos = mapeo_tambos.sort_values(by='Tambo', ascending=True)
+        
+        nombres_tambos_ordenados = mapeo_tambos['Tambo'].tolist()
+        tambo_nombre_seleccionado = st.sidebar.selectbox("2. Selecciona el Tambo:", nombres_tambos_ordenados)
+        
+        tambo_seleccionado = mapeo_tambos[mapeo_tambos['Tambo'] == tambo_nombre_seleccionado]['Num_Tambo'].values[0]
 
-if uploaded_file:
-    df = pd.read_excel(uploaded_file, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
-    df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
-    df = df.dropna(subset=['Fecha'])
-    df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
-    df = df.dropna(subset=['Fecha']) 
-    
-    # Agrupación por Ciclo Operativo (Sábado a Viernes)
-    df['Fecha_Cierre_Viernes'] = df['Fecha'] + pd.to_timedelta((4 - df['Fecha'].dt.weekday) % 7, unit='D')
-    df['Fecha_Inicio_Sabado'] = df['Fecha_Cierre_Viernes'] - pd.Timedelta(days=6)
-    
-    df['Ciclo_Semana'] = df.apply(lambda r: f"Viernes {r['Fecha_Cierre_Viernes'].strftime('%d/%m/%Y')} (Sab {r['Fecha_Inicio_Sabado'].strftime('%d/%m/%Y')} al Vie {r['Fecha_Cierre_Viernes'].strftime('%d/%m/%Y')})", axis=1)
-    
-    # --- BARRA LATERAL ---
-    st.sidebar.header("Filtros de Reporte")
-    
-    ciclos_disponibles = df[['Fecha_Cierre_Viernes', 'Ciclo_Semana']].drop_duplicates().sort_values('Fecha_Cierre_Viernes', ascending=False)['Ciclo_Semana'].tolist()
-    ciclo_seleccionado = st.sidebar.selectbox("1. Selecciona el Cierre de Semana (Viernes):", ciclos_disponibles)
-    
-    df_semana_actual = df[df['Ciclo_Semana'] == ciclo_seleccionado]
-    
-    mapeo_tambos = df_semana_actual[['Tambo', 'Num_Tambo']].dropna().drop_duplicates()
-    mapeo_tambos = mapeo_tambos.sort_values(by='Tambo', ascending=True)
-    
-    nombres_tambos_ordenados = mapeo_tambos['Tambo'].tolist()
-    tambo_nombre_seleccionado = st.sidebar.selectbox("2. Selecciona el Tambo:", nombres_tambos_ordenados)
-    
-    tambo_seleccionado = mapeo_tambos[mapeo_tambos['Tambo'] == tambo_nombre_seleccionado]['Num_Tambo'].values[0]
+        st.sidebar.divider()
+        st.sidebar.subheader("📦 Envío Masivo")
+        generar_lote = st.sidebar.button("Generar ZIP con todos los Tambos")
 
-    st.sidebar.divider()
-    st.sidebar.subheader("Envío Masivo")
-    generar_lote = st.sidebar.button("Generar ZIP con todos los Tambos")
-
-    if generar_lote:
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            for _, row_t in mapeo_tambos.iterrows():
-                t_name = row_t['Tambo']
-                t_id = row_t['Num_Tambo']
-                df_t = df_semana_actual[df_semana_actual['Num_Tambo'] == t_id].sort_values('Fecha')
-                if not df_t.empty:
-                    f_ini = df_t['Fecha_Inicio_Sabado'].iloc[0].strftime('%d/%m/%Y')
-                    f_fin = df_t['Fecha_Cierre_Viernes'].iloc[0].strftime('%d/%m/%Y')
-                    pdf_data = generar_pdf_bytes(df_t, t_name, t_id, f_ini, f_fin, "Sin comp.", "Sin comp.")
-                    zip_file.writestr(f"Resumen_Tambo_{t_id}_{t_name.replace(' ', '_')}_Cierre_{f_fin.replace('/', '-')}.pdf", pdf_data)
-        
-        zip_buffer.seek(0)
-        st.sidebar.download_button(
-            label="📥 Descargar ZIP con todos los PDFs",
-            data=zip_buffer,
-            file_name=f"Resumenes_Cierre_{ciclo_seleccionado[:15].strip()}.zip",
-            mime="application/zip"
-        )
-
-    # --- VISTA INDIVIDUAL Y COMPARATIVA ---
-    st.divider()
-    df_tambo_semana = df_semana_actual[df_semana_actual['Num_Tambo'] == tambo_seleccionado].sort_values('Fecha')
-    
-    if not df_tambo_semana.empty:
-        f_inicio = df_tambo_semana['Fecha_Inicio_Sabado'].iloc[0].strftime('%d/%m/%Y')
-        f_fin = df_tambo_semana['Fecha_Cierre_Viernes'].iloc[0].strftime('%d/%m/%Y')
-        
-        st.subheader(f"Resumen Cierre Viernes ({f_inicio} al {f_fin}) - {tambo_nombre_seleccionado} (Código #{tambo_seleccionado})")
-        
-        fecha_viernes_actual = df_tambo_semana['Fecha_Cierre_Viernes'].iloc[0]
-        fecha_viernes_anterior = fecha_viernes_actual - pd.Timedelta(days=7)
-        df_tambo_anterior = df[(df['Num_Tambo'] == tambo_seleccionado) & (df['Fecha_Cierre_Viernes'] == fecha_viernes_anterior)]
-        
-        litros_actual = df_tambo_semana['Litros_Ticket'].sum()
-        temp_actual = df_tambo_semana['Temperatura'].mean()
-        grasa_actual = df_tambo_semana['Grasa'].mean() if 'Grasa' in df_tambo_semana.columns else float('nan')
-        prot_actual = df_tambo_semana['Proteina'].mean() if 'Proteina' in df_tambo_semana.columns else float('nan')
-        
-        comp_litros_str = "Sin datos periodo previo"
-        comp_temp_str = "Sin datos periodo previo"
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        if not df_tambo_anterior.empty:
-            litros_anterior = df_tambo_anterior['Litros_Ticket'].sum()
-            temp_anterior = df_tambo_anterior['Temperatura'].mean()
+        if generar_lote:
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                for _, row_t in mapeo_tambos.iterrows():
+                    t_name = row_t['Tambo']
+                    t_id = row_t['Num_Tambo']
+                    df_t = df_semana_actual[df_semana_actual['Num_Tambo'] == t_id].sort_values('Fecha')
+                    if not df_t.empty:
+                        f_ini = df_t['Fecha_Inicio_Sabado'].iloc[0].strftime('%d/%m/%Y')
+                        f_fin = df_t['Fecha_Cierre_Viernes'].iloc[0].strftime('%d/%m/%Y')
+                        pdf_data = generar_pdf_bytes(df_t, t_name, t_id, f_ini, f_fin, "Sin comp.", "Sin comp.")
+                        zip_file.writestr(f"Resumen_Tambo_{t_id}_{t_name.replace(' ', '_')}_Cierre_{f_fin.replace('/', '-')}.pdf", pdf_data)
             
-            diff_litros_pct = ((litros_actual - litros_anterior) / litros_anterior) * 100 if litros_anterior > 0 else 0
-            diff_temp = temp_actual - temp_anterior
+            zip_buffer.seek(0)
+            st.sidebar.download_button(
+                label="📥 Descargar ZIP con todos los PDFs",
+                data=zip_buffer,
+                file_name=f"Resumenes_Cierre_{ciclo_seleccionado[:15].strip()}.zip",
+                mime="application/zip"
+            )
+
+        # --- VISTA INDIVIDUAL Y COMPARATIVA ---
+        st.divider()
+        df_tambo_semana = df_semana_actual[df_semana_actual['Num_Tambo'] == tambo_seleccionado].sort_values('Fecha')
+        
+        if not df_tambo_semana.empty:
+            f_inicio = df_tambo_semana['Fecha_Inicio_Sabado'].iloc[0].strftime('%d/%m/%Y')
+            f_fin = df_tambo_semana['Fecha_Cierre_Viernes'].iloc[0].strftime('%d/%m/%Y')
             
-            col1.metric("Litros (Ticket)", f"{litros_actual:,.0f} L", delta=f"{diff_litros_pct:+.1f}% vs. Per. Ant.")
-            col2.metric("Temp. Promedio", f"{temp_actual:.1f} °C", delta=f"{diff_temp:+.1f} °C", delta_color="inverse")
+            st.subheader(f"Resumen Cierre Viernes ({f_inicio} al {f_fin}) - {tambo_nombre_seleccionado} (Código #{tambo_seleccionado})")
             
-            comp_litros_str = f"{diff_litros_pct:+.1f}% vs. Per. Ant."
-            comp_temp_str = f"{diff_temp:+.1f} °C vs. Per. Ant."
+            fecha_viernes_actual = df_tambo_semana['Fecha_Cierre_Viernes'].iloc[0]
+            fecha_viernes_anterior = fecha_viernes_actual - pd.Timedelta(days=7)
+            df_tambo_anterior = df[(df['Num_Tambo'] == tambo_seleccionado) & (df['Fecha_Cierre_Viernes'] == fecha_viernes_anterior)]
+            
+            litros_actual = df_tambo_semana['Litros_Ticket'].sum()
+            temp_actual = df_tambo_semana['Temperatura'].mean()
+            grasa_actual = df_tambo_semana['Grasa'].mean() if 'Grasa' in df_tambo_semana.columns else float('nan')
+            prot_actual = df_tambo_semana['Proteina'].mean() if 'Proteina' in df_tambo_semana.columns else float('nan')
+            
+            comp_litros_str = "Sin datos periodo previo"
+            comp_temp_str = "Sin datos periodo previo"
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            if not df_tambo_anterior.empty:
+                litros_anterior = df_tambo_anterior['Litros_Ticket'].sum()
+                temp_anterior = df_tambo_anterior['Temperatura'].mean()
+                
+                diff_litros_pct = ((litros_actual - litros_anterior) / litros_anterior) * 100 if litros_anterior > 0 else 0
+                diff_temp = temp_actual - temp_anterior
+                
+                col1.metric("Litros (Ticket)", f"{litros_actual:,.0f} L", delta=f"{diff_litros_pct:+.1f}% vs. Per. Ant.")
+                col2.metric("Temp. Promedio", f"{temp_actual:.1f} °C", delta=f"{diff_temp:+.1f} °C", delta_color="inverse")
+                
+                comp_litros_str = f"{diff_litros_pct:+.1f}% vs. Per. Ant."
+                comp_temp_str = f"{diff_temp:+.1f} °C vs. Per. Ant."
+            else:
+                col1.metric("Litros (Ticket)", f"{litros_actual:,.0f} L")
+                col2.metric("Temp. Promedio", f"{temp_actual:.1f} °C")
+                
+            col3.metric("Grasa Promedio", f"{grasa_actual:.2f}%" if pd.notna(grasa_actual) else "S/D")
+            col4.metric("Proteína Promedio", f"{prot_actual:.2f}%" if pd.notna(prot_actual) else "S/D")
+            
+            st.markdown("---")
+            st.markdown("**Detalle de retiros del período:**")
+            df_mostrar = df_tambo_semana[['Fecha', 'N_Remito', 'Litros_Ticket', 'Temperatura', 'Grasa', 'Proteina']].copy()
+            df_mostrar['Fecha'] = df_mostrar['Fecha'].dt.strftime('%d/%m/%Y')
+            st.dataframe(df_mostrar, hide_index=True, use_container_width=True)
+            
+            pdf_bytes = generar_pdf_bytes(
+                df_tambo_semana, tambo_nombre_seleccionado, tambo_seleccionado, 
+                f_inicio, f_fin, comp_litros_str, comp_temp_str
+            )
+            
+            st.download_button(
+                label=f"📄 Descargar PDF de {tambo_nombre_seleccionado} (Cierre {f_fin})",
+                data=pdf_bytes,
+                file_name=f"Resumen_{tambo_nombre_seleccionado.replace(' ', '_')}_Cierre_{f_fin.replace('/', '-')}.pdf",
+                mime="application/pdf"
+            )
         else:
-            col1.metric("Litros (Ticket)", f"{litros_actual:,.0f} L")
-            col2.metric("Temp. Promedio", f"{temp_actual:.1f} °C")
+            st.warning("No hay registros para este tambo en el período seleccionado.")
             
-        col3.metric("Grasa Promedio", f"{grasa_actual:.2f}%" if pd.notna(grasa_actual) else "S/D")
-        col4.metric("Proteína Promedio", f"{prot_actual:.2f}%" if pd.notna(prot_actual) else "S/D")
-        
-        st.markdown("---")
-        st.markdown("**Detalle de retiros del período:**")
-        df_mostrar = df_tambo_semana[['Fecha', 'N_Remito', 'Litros_Ticket', 'Temperatura', 'Grasa', 'Proteina']].copy()
-        df_mostrar['Fecha'] = df_mostrar['Fecha'].dt.strftime('%d/%m/%Y')
-        st.dataframe(df_mostrar, hide_index=True, use_container_width=True)
-        
-        pdf_bytes = generar_pdf_bytes(
-            df_tambo_semana, tambo_nombre_seleccionado, tambo_seleccionado, 
-            f_inicio, f_fin, comp_litros_str, comp_temp_str
-        )
-        
-        st.download_button(
-            label=f"📄 Descargar PDF de {tambo_nombre_seleccionado} (Cierre {f_fin})",
-            data=pdf_bytes,
-            file_name=f"Resumen_{tambo_nombre_seleccionado.replace(' ', '_')}_Cierre_{f_fin.replace('/', '-')}.pdf",
-            mime="application/pdf"
-        )
-    else:
-        st.warning("No hay registros para este tambo en el período seleccionado.")
+    except Exception as e:
+        st.error(f"Error al cargar o procesar el archivo desde Google Drive. Verifica que el enlace sea público y el ID sea correcto. Detalle técnico: {e}")
