@@ -6,7 +6,7 @@ import zipfile
 import io
 
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
-st.title("Panel de recolección y liquidación por tambo")
+st.title("Panel de Recolección y Liquidación por Tambo")
 
 # --- FUNCIÓN PARA GENERAR EL PDF ---
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, num_semana, comp_litros, comp_temp):
@@ -92,30 +92,24 @@ if uploaded_file:
     df = df.dropna(subset=['Fecha']) 
     
     # Lógica de Semana Lechera (Sábado a Viernes)
-    # Al sumarle 1 día antes de calcular la semana ISO, logramos que Sábado y Domingo 
-    # queden agrupados en la misma semana operativa que arranca el Sábado.
     df['Fecha_Ajustada'] = df['Fecha'] + pd.Timedelta(days=1)
     df['Semana'] = df['Fecha_Ajustada'].dt.isocalendar().week
     
     # --- BARRA LATERAL ---
     st.sidebar.header("Filtros de Reporte")
     
-    # 1. Selector de Semana
     semanas_disponibles = sorted(df['Semana'].unique())
     semana_seleccionada = st.sidebar.selectbox("1. Selecciona la Semana:", semanas_disponibles)
     
-    # Filtrar datos de la semana seleccionada
     df_semana_actual = df[df['Semana'] == semana_seleccionada]
     
-    # 2. Selector de Tambo (Ordenado alfabéticamente por Nombre)
-    # Obtenemos los pares únicos de Nombre y Número de Tambo y los ordenamos por Nombre (A-Z)
+    # Selector de Tambo ordenado alfabéticamente por Nombre
     mapeo_tambos = df_semana_actual[['Tambo', 'Num_Tambo']].dropna().drop_duplicates()
     mapeo_tambos = mapeo_tambos.sort_values(by='Tambo', ascending=True)
     
     nombres_tambos_ordenados = mapeo_tambos['Tambo'].tolist()
     tambo_nombre_seleccionado = st.sidebar.selectbox("2. Selecciona el Tambo:", nombres_tambos_ordenados)
     
-    # Obtener el número de tambo correspondiente al nombre elegido
     tambo_seleccionado = mapeo_tambos[mapeo_tambos['Tambo'] == tambo_nombre_seleccionado]['Num_Tambo'].values[0]
 
     st.sidebar.divider()
@@ -155,7 +149,6 @@ if uploaded_file:
         st.subheader(f"Resumen Semana {semana_seleccionada} - {tambo_nombre_seleccionado} (Código #{tambo_seleccionado})")
         st.caption(f"Período operativo (Sábado a Viernes): {f_inicio.strftime('%d/%m/%Y')} al {f_fin.strftime('%d/%m/%Y')}")
         
-        # Calcular semana anterior para comparativa
         df_tambo_anterior = df[(df['Num_Tambo'] == tambo_seleccionado) & (df['Semana'] == semana_seleccionada - 1)]
         
         litros_actual = df_tambo_semana['Litros_Ticket'].sum()
@@ -200,12 +193,7 @@ if uploaded_file:
         )
         
         st.download_button(
-           st.download_button(
             label=f"📄 Descargar PDF de {tambo_nombre_seleccionado} (Semana {semana_seleccionada})",
-            data=pdf_bytes,
-            file_name=f"Resumen_{tambo_nombre_seleccionado.replace(' ', '_')}_Semana_{semana_seleccionada}.pdf",
-            mime="application/pdf"
-        )
             data=pdf_bytes,
             file_name=f"Resumen_{tambo_nombre_seleccionado.replace(' ', '_')}_Semana_{semana_seleccionada}.pdf",
             mime="application/pdf"
