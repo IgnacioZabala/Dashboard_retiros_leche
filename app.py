@@ -82,9 +82,8 @@ if os.path.exists(ruta_archivo):
     df = df.dropna(subset=['Fecha']) 
     
     st.sidebar.header("Filtros del Resumen")
-    # Convertimos a string y luego a entero seguro para evitar errores de tipo
-df['Num_Tambo'] = pd.to_numeric(df['Num_Tambo'], errors='coerce')
-lista_tambos = sorted([int(x) for x in df['Num_Tambo'].dropna().unique()])
+    # Convertimos a string y luego a entero seguro para evitar errores de tipo df['Num_Tambo'] = pd.to_numeric(df['Num_Tambo'], errors='coerce')
+    lista_tambos = sorted([int(x) for x in df['Num_Tambo'].dropna().unique()])
     tambo_seleccionado = st.sidebar.selectbox("1. Selecciona el Código de Tambo:", lista_tambos)
     
     df_tambo = df[df['Num_Tambo'] == tambo_seleccionado]
