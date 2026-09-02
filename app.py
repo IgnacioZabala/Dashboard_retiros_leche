@@ -6,7 +6,7 @@ import zipfile
 import io
 
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
-st.title("🚜 Panel de Recolección y Liquidación por Tambo")
+st.title("Panel de Recolección y Liquidación por Tambo")
 
 # --- FUNCIÓN PARA GENERAR EL PDF (LOGO CENTRADO Y SIN TEXTO EXTRA) ---
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp):
@@ -116,7 +116,7 @@ if uploaded_file:
     tambo_seleccionado = mapeo_tambos[mapeo_tambos['Tambo'] == tambo_nombre_seleccionado]['Num_Tambo'].values[0]
 
     st.sidebar.divider()
-    st.sidebar.subheader("📦 Envío Masivo")
+    st.sidebar.subheader("Envío Masivo")
     generar_lote = st.sidebar.button("Generar ZIP con todos los Tambos")
 
     if generar_lote:
