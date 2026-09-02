@@ -6,9 +6,9 @@ import zipfile
 import io
 
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
-st.title("Panel de recolección y liquidación por Tambo")
+st.title("🚜 Panel de Recolección y Liquidación por Tambo")
 
-# --- FUNCIÓN PARA GENERAR EL PDF (LOGO CENTRADO Y TÍTULO LIMPIO) ---
+# --- FUNCIÓN PARA GENERAR EL PDF (LOGO CENTRADO Y SIN TEXTO EXTRA) ---
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp):
     pdf = FPDF()
     pdf.add_page()
@@ -16,24 +16,19 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     # --- LOGO CENTRADO ---
     ruta_logo = "logo.png"
     if os.path.exists(ruta_logo):
-        # Ancho de la página A4 = 210 mm. Si el logo mide 40 mm de ancho, 
-        # la posición X para centrarlo es (210 - 40) / 2 = 85 mm.
-        pdf.image(ruta_logo, x=85, y=10, w=40)
-        # Dejamos espacio vertical según la altura del logo para que el título baje ordenadamente
-        pdf.set_y(52) 
+        # Logo centrado arriba
+        pdf.image(ruta_logo, x=80, y=10, w=50)
+        pdf.set_y(48) # Posición debajo del logo para continuar el documento
     else:
         pdf.set_y(15)
     
-    # --- TÍTULO Y SUBTÍTULO CENTRADOS ---
-    pdf.set_font('Arial', 'B', 15)
-    pdf.cell(0, 8, 'Coopagro - Planta Tandil', ln=True, align='C')
-    
-    pdf.set_font('Arial', '', 11)
+    # --- TÍTULO CENTRADO (SIN EL TEXTO DE COOPAGRO) ---
+    pdf.set_font('Arial', 'B', 12)
     pdf.set_text_color(100, 100, 100)
     pdf.cell(0, 6, 'Resumen semanal de recoleccion', ln=True, align='C')
     
     pdf.set_text_color(0, 0, 0) # Volver a texto negro
-    pdf.ln(5)
+    pdf.ln(4)
     pdf.line(15, pdf.get_y(), 195, pdf.get_y()) # Línea divisoria elegante
     
     # --- DATOS DEL PRODUCTOR ---
