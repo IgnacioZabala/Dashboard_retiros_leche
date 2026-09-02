@@ -200,7 +200,12 @@ if uploaded_file:
         )
         
         st.download_button(
-            label=f"📄 Descargar PDF de {tambo_nombre_nombre_si_aplica = 'Tambo'} (Semana {semana_seleccionada})".replace("_si_aplica = 'Tambo'", ""),
+           st.download_button(
+            label=f"📄 Descargar PDF de {tambo_nombre_seleccionado} (Semana {semana_seleccionada})",
+            data=pdf_bytes,
+            file_name=f"Resumen_{tambo_nombre_seleccionado.replace(' ', '_')}_Semana_{semana_seleccionada}.pdf",
+            mime="application/pdf"
+        )
             data=pdf_bytes,
             file_name=f"Resumen_{tambo_nombre_seleccionado.replace(' ', '_')}_Semana_{semana_seleccionada}.pdf",
             mime="application/pdf"
