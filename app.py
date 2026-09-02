@@ -5,7 +5,7 @@ import os
 
 # 1. Configuración de la página
 st.set_page_config(page_title="Resumen Semanal de Recolección", layout="wide")
-st.title("🚜 Panel de Retiro de Leche por Productor")
+st.title("Panel de retiro de leche por productor")
 
 # --- FUNCIÓN PARA GENERAR EL PDF ---
 def generar_pdf(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin):
