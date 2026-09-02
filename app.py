@@ -6,33 +6,39 @@ import zipfile
 import io
 
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
-st.title("Panel de Recolección y Liquidación por Tambo")
+st.title("Panel de recolección y liquidación por Tambo")
 
-# --- FUNCIÓN PARA GENERAR EL PDF ---
+# --- FUNCIÓN PARA GENERAR EL PDF (LOGO CENTRADO Y TÍTULO LIMPIO) ---
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp):
     pdf = FPDF()
     pdf.add_page()
     
-    # Logo
+    # --- LOGO CENTRADO ---
     ruta_logo = "logo.png"
-    espacio_izquierdo = 35 if os.path.exists(ruta_logo) else 0
-    if espacio_izquierdo > 0: pdf.image(ruta_logo, 10, 8, 30) 
+    if os.path.exists(ruta_logo):
+        # Ancho de la página A4 = 210 mm. Si el logo mide 40 mm de ancho, 
+        # la posición X para centrarlo es (210 - 40) / 2 = 85 mm.
+        pdf.image(ruta_logo, x=85, y=10, w=40)
+        # Dejamos espacio vertical según la altura del logo para que el título baje ordenadamente
+        pdf.set_y(52) 
+    else:
+        pdf.set_y(15)
     
-    pdf.set_font('Arial', 'B', 16)
-    if espacio_izquierdo > 0: pdf.cell(espacio_izquierdo)
-    pdf.cell(0, 10, 'Coopagro - Planta Tandil', ln=True, align='L')
+    # --- TÍTULO Y SUBTÍTULO CENTRADOS ---
+    pdf.set_font('Arial', 'B', 15)
+    pdf.cell(0, 8, 'Coopagro - Planta Tandil', ln=True, align='C')
     
-    pdf.set_font('Arial', '', 12)
+    pdf.set_font('Arial', '', 11)
     pdf.set_text_color(100, 100, 100)
-    if espacio_izquierdo > 0: pdf.cell(espacio_izquierdo)
-    pdf.cell(0, 10, 'Resumen Semanal de Recoleccion', ln=True, align='L')
+    pdf.cell(0, 6, 'Resumen semanal de recoleccion', ln=True, align='C')
     
+    pdf.set_text_color(0, 0, 0) # Volver a texto negro
     pdf.ln(5)
-    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y()) # Línea divisoria elegante
     
-    pdf.ln(5)
+    # --- DATOS DEL PRODUCTOR ---
+    pdf.ln(6)
     pdf.set_font('Arial', 'B', 11)
-    pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 7, f'Productor: {tambo_nombre} (Codigo #{tambo_id})', ln=True)
     pdf.set_font('Arial', '', 10)
     pdf.cell(0, 6, f'Periodo (Sabado a Viernes): {fecha_inicio} al {fecha_fin}', ln=True)
@@ -54,6 +60,7 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     
     pdf.ln(6)
     
+    # --- TABLA DE DETALLE ---
     pdf.set_font('Arial', 'B', 9)
     pdf.set_fill_color(200, 220, 255)
     pdf.cell(35, 8, 'Fecha', 1, 0, 'C', fill=True)
@@ -92,23 +99,19 @@ if uploaded_file:
     df = df.dropna(subset=['Fecha']) 
     
     # Agrupación por Ciclo Operativo (Sábado a Viernes)
-    # Calculamos el próximo viernes de cada fecha para usarlo como la "Clave de Cierre" de la semana
     df['Fecha_Cierre_Viernes'] = df['Fecha'] + pd.to_timedelta((4 - df['Fecha'].dt.weekday) % 7, unit='D')
     df['Fecha_Inicio_Sabado'] = df['Fecha_Cierre_Viernes'] - pd.Timedelta(days=6)
     
-    # Crear etiqueta amigable para el selector (Ej: "Cierre Viernes 05/09/2025 (Del 30/08 al 05/09)")
     df['Ciclo_Semana'] = df.apply(lambda r: f"Viernes {r['Fecha_Cierre_Viernes'].strftime('%d/%m/%Y')} (Sab {r['Fecha_Inicio_Sabado'].strftime('%d/%m/%Y')} al Vie {r['Fecha_Cierre_Viernes'].strftime('%d/%m/%Y')})", axis=1)
     
     # --- BARRA LATERAL ---
     st.sidebar.header("Filtros de Reporte")
     
-    # 1. Selector de Ciclo Semanal ordenado cronológicamente
     ciclos_disponibles = df[['Fecha_Cierre_Viernes', 'Ciclo_Semana']].drop_duplicates().sort_values('Fecha_Cierre_Viernes', ascending=False)['Ciclo_Semana'].tolist()
     ciclo_seleccionado = st.sidebar.selectbox("1. Selecciona el Cierre de Semana (Viernes):", ciclos_disponibles)
     
     df_semana_actual = df[df['Ciclo_Semana'] == ciclo_seleccionado]
     
-    # 2. Selector de Tambo ordenado alfabéticamente por Nombre
     mapeo_tambos = df_semana_actual[['Tambo', 'Num_Tambo']].dropna().drop_duplicates()
     mapeo_tambos = mapeo_tambos.sort_values(by='Tambo', ascending=True)
     
@@ -121,7 +124,6 @@ if uploaded_file:
     st.sidebar.subheader("📦 Envío Masivo")
     generar_lote = st.sidebar.button("Generar ZIP con todos los Tambos")
 
-    # --- ACCIÓN DE ENVÍO EN LOTE (ZIP) ---
     if generar_lote:
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
@@ -153,7 +155,6 @@ if uploaded_file:
         
         st.subheader(f"Resumen Cierre Viernes ({f_inicio} al {f_fin}) - {tambo_nombre_seleccionado} (Código #{tambo_seleccionado})")
         
-        # Buscar semana anterior para comparativa exacta
         fecha_viernes_actual = df_tambo_semana['Fecha_Cierre_Viernes'].iloc[0]
         fecha_viernes_anterior = fecha_viernes_actual - pd.Timedelta(days=7)
         df_tambo_anterior = df[(df['Num_Tambo'] == tambo_seleccionado) & (df['Fecha_Cierre_Viernes'] == fecha_viernes_anterior)]
