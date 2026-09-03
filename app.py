@@ -49,13 +49,13 @@ def limpiar_fecha_lab(texto_fecha):
     # Si son exactamente 8 números juntos (ej: 10082026)
     if texto_fecha.isdigit() and len(texto_fecha) == 8:
         try:
-            return pd.to_datetime(texto_fecha, format='%d%m%Y')
+            return pd.to_datetime(texto_fecha, format='%d%m%Y').normalize()
         except:
             return None
     else:
         # Si tiene barras, guiones o formato estándar (ej: 03/08/2026)
         try:
-            return pd.to_datetime(texto_fecha, dayfirst=True, errors='coerce')
+            return pd.to_datetime(texto_fecha, dayfirst=True, errors='coerce').normalize()
         except:
             return None
 
@@ -230,11 +230,12 @@ try:
     df_contactos['Contacto_Nombre'] = df_contactos[col_contacto]
     df_contactos['Email'] = df_contactos[col_email]
     
+    # Procesamiento de Planilla Principal de Remitos
     df = df_raw.copy()
     df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
     df['Num_Tambo'] = df['Num_Tambo'].astype(str).str.strip()
     df = df.dropna(subset=['Fecha'])
-    df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
+    df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce').dt.normalize()
     df = df.dropna(subset=['Fecha']) 
 
     # --- CRUCE SEGURO CON EL ARCHIVO DE LABORATORIO DE GOOGLE DRIVE ---
@@ -266,7 +267,7 @@ try:
                     lista_tambo.append(None)
                     lista_fecha.append(None)
             
-            df_lab['Num_Tambo'] = lista_tambo
+            df_lab['Num_Tambo'] = [str(t).strip() if pd.notna(t) else None for t in lista_tambo]
             df_lab['Fecha'] = lista_fecha
             
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
