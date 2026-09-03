@@ -11,7 +11,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
-st.title("Panel de recolección y liquidación por Tambo")
+st.title("🚜 Panel de Recolección y Liquidación por Tambo")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE ---
 FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" # Archivo principal (Remitos y Contactos)
@@ -26,7 +26,9 @@ def cargar_datos_drive(u_remitos, u_lab):
     df_contactos = pd.read_excel(u_remitos, sheet_name='Código Tambos')
     
     try:
-        df_lab = pd.read_excel(u_lab)
+        xls_lab = pd.ExcelFile(u_lab)
+        sheet_lab = xls_lab.sheet_names[0]
+        df_lab = pd.read_excel(u_lab, sheet_name=sheet_lab)
     except Exception as e:
         df_lab = pd.DataFrame()
         st.warning(f"No se pudo cargar el archivo de laboratorio desde Drive. Detalle: {e}")
@@ -45,8 +47,8 @@ def formato_temp(valor):
 def limpiar_tambo(val):
     if pd.isna(val):
         return ""
-    s = str(val).strip()
-    s = s.replace('T', '').replace('t', '')
+    s = str(val).strip().upper()
+    s = s.replace('T', '').replace(' ', '')
     if '.' in s:
         try:
             s = str(int(float(s)))
@@ -249,12 +251,13 @@ try:
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce').dt.normalize()
     df = df.dropna(subset=['Fecha']) 
 
-    # --- CRUCE ESTRICTO Y LIMPIO CON EL ARCHIVO DE LABORATORIO ---
+    # --- CRUCE ESTRICTO Y DINÁMICO CON EL ARCHIVO DE LABORATORIO ---
     if not df_lab_raw.empty:
         try:
             df_lab = df_lab_raw.copy()
             df_lab.columns = df_lab.columns.astype(str).str.strip()
             
+            # Buscar columna de muestra / sample number
             matching_cols = [c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower() or 'tambo' in c.lower()]
             col_sample = matching_cols[0] if matching_cols else df_lab.columns[0]
             
@@ -279,6 +282,7 @@ try:
             df_lab['Num_Tambo'] = lista_tambo
             df_lab['Fecha'] = lista_fecha
             
+            # Detección flexible de columnas de Grasa y Proteína
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
             col_prot = next((c for c in df_lab.columns if 'protein' in c.lower() or 'proteina' in c.lower()), None)
             
@@ -294,7 +298,7 @@ try:
             if cols_agg:
                 df_lab_clean = df_lab.dropna(subset=['Fecha', 'Num_Tambo']).groupby(['Num_Tambo', 'Fecha'], as_index=False).agg(cols_agg)
                 
-                # Merge estricto usando llaves limpias
+                # Merge seguro
                 df = pd.merge(df, df_lab_clean, on=['Num_Tambo', 'Fecha'], how='left')
                 
                 if 'Grasa_Lab' in df.columns:
