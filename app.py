@@ -196,7 +196,7 @@ try:
     st.sidebar.subheader("🔬 Archivo de Laboratorio")
     archivo_lab_subido = st.sidebar.file_uploader("Subir Excel de Lab (Grasa/Proteína)", type=["xlsx", "xls"])
 
-    # Procesar contactos de tambos de forma segura buscando la columna exacta 'Email'
+    # Procesar contactos de tambos de forma segura
     df_contactos = df_contactos_raw.copy()
     df_contactos.columns = df_contactos.columns.astype(str).str.strip()
     
@@ -216,21 +216,32 @@ try:
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
     df = df.dropna(subset=['Fecha']) 
 
-    # --- CRUCE CON EL ARCHIVO DE LABORATORIO SUBIDO ---
+    # --- CRUCE SEGURO CON EL ARCHIVO DE LABORATORIO SUBIDO ---
     if archivo_lab_subido is not None:
-        df_lab = pd.read_excel(archivo_lab_subido)
-        df_lab.columns = df_lab.columns.astype(str).str.strip()
-        
-        # La columna es 'Sample number' (ej: T10 29072026 9:15)
-        col_sample = [c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower()][0]
-        
-        temp_split = df_lab[col_sample].astype(str).str.strip().str.split(' ', expand=True)
-        
-        if temp_split.shape[1] >= 2:
-            df_lab['Num_Tambo'] = temp_split[0].str.replace('T', '', case=False).str.strip()
-            fecha_str = temp_split[1]
-            df_lab['Fecha'] = pd.to_datetime(fecha_str, format='%d%m%Y', errors='coerce')
+        try:
+            df_lab = pd.read_excel(archivo_lab_subido)
+            df_lab.columns = df_lab.columns.astype(str).str.strip()
             
+            # Búsqueda flexible de la columna Sample number (o primera columna por defecto)
+            matching_cols = [c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower()]
+            col_sample = matching_cols[0] if matching_cols else df_lab.columns[0]
+            
+            # Función segura para extraer tambo y fecha sin errores de índice
+            def extraer_tambo_fecha(texto):
+                if pd.isna(texto):
+                    return None, None
+                partes = str(texto).strip().split()
+                if len(partes) >= 2:
+                    tambo = partes[0].replace('T', '').replace('t', '').strip()
+                    fecha = pd.to_datetime(partes[1], format='%d%m%Y', errors='coerce')
+                    return tambo, fecha
+                return None, None
+
+            res_extraccion = df_lab[col_sample].apply(extraer_tambo_fecha)
+            df_lab['Num_Tambo'] = [x[0] for x in res_extraccion]
+            df_lab['Fecha'] = [x[1] for x in res_extraccion]
+            
+            # Búsqueda flexible de columnas de Grasa (Fat) y Proteína (Protein)
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
             col_prot = next((c for c in df_lab.columns if 'protein' in c.lower() or 'proteina' in c.lower()), None)
             
@@ -252,6 +263,8 @@ try:
                 df['Grasa'] = df['Grasa_Lab'].combine_first(df['Grasa'])
             if 'Proteina_Lab' in df.columns:
                 df['Proteina'] = df['Proteina_Lab'].combine_first(df['Proteina'])
+        except Exception as err_lab:
+            st.sidebar.error(f"Error procesando lab: {err_lab}")
     
     # Agrupación por Ciclo Operativo (Sábado a Viernes)
     df['Fecha_Cierre_Viernes'] = df['Fecha'] + pd.to_timedelta((4 - df['Fecha'].dt.weekday) % 7, unit='D')
@@ -326,7 +339,6 @@ try:
         
         st.subheader(f"Resumen Cierre Viernes ({f_inicio} al {f_fin}) - {tambo_nombre_seleccionado} (Código #{tambo_seleccionado})")
         
-        # Buscar correo de forma segura (evita traer números sueltos si está vacío)
         info_contacto = df_contactos[df_contactos['Num_Tambo'] == str(tambo_seleccionado)]
         email_tambo = ""
         nombre_contacto = "Productor"
@@ -404,7 +416,6 @@ try:
         if ver_temperatura:
             df_mostrar['Temperatura'] = df_mostrar['Temperatura'].apply(lambda x: formato_temp(x))
             
-        # Formatear Grasa y Proteína para la tabla web si existen
         if 'Grasa' in df_mostrar.columns:
             df_mostrar['Grasa'] = df_mostrar['Grasa'].apply(lambda x: f"{x:.2f}%".replace('.', ',') if pd.notna(x) else '-')
         if 'Proteina' in df_mostrar.columns:
