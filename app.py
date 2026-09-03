@@ -11,11 +11,11 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
-st.title("🚜 Panel de Recolección y Liquidación por Tambo")
+st.title("Panel de recolección y liquidación por Tambo")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE ---
 FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" # Archivo principal (Remitos y Contactos)
-FILE_ID_LAB = "1NNYjM5Aqg9iDdJ85UoALRim8P2A1kaUD"      # Archivo de Laboratorio (actualizado con tu ID)
+FILE_ID_LAB = "1NNYjM5Aqg9iDdJ85UoALRim8P2A1kaUD"      # Archivo de Laboratorio
 
 url_remitos = f"https://drive.google.com/uc?export=download&id={FILE_ID_REMITOS}"
 url_lab = f"https://drive.google.com/uc?export=download&id={FILE_ID_LAB}"
@@ -33,7 +33,7 @@ def cargar_datos_drive(u_remitos, u_lab):
         
     return df_remitos, df_contactos, df_lab
 
-# --- FUNCIONES DE FORMATO ---
+# --- FUNCIONES DE FORMATO Y LIMPIEZA ---
 def formato_miles(valor):
     return f"{valor:,.0f}".replace(',', '.')
 
@@ -41,6 +41,23 @@ def formato_temp(valor):
     if pd.isna(valor):
         return '-'
     return f"{valor:.1f}".replace('.', ',') + "°"
+
+def limpiar_fecha_lab(texto_fecha):
+    if pd.isna(texto_fecha):
+        return None
+    texto_fecha = str(texto_fecha).strip()
+    # Si son exactamente 8 números juntos (ej: 10082026)
+    if texto_fecha.isdigit() and len(texto_fecha) == 8:
+        try:
+            return pd.to_datetime(texto_fecha, format='%d%m%Y')
+        except:
+            return None
+    else:
+        # Si tiene barras, guiones o formato estándar (ej: 03/08/2026)
+        try:
+            return pd.to_datetime(texto_fecha, dayfirst=True, errors='coerce')
+        except:
+            return None
 
 # --- FUNCIÓN PARA GENERAR EL PDF ---
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_comp, hay_datos_previos):
@@ -201,7 +218,6 @@ def enviar_correo_productor(destinatario_email, nombre_contacto, tambo_nombre, p
 try:
     df_raw, df_contactos_raw, df_lab_raw = cargar_datos_drive(url_remitos, url_lab)
     
-    # Procesar contactos de tambos de forma 100% segura contra index out of bounds
     df_contactos = df_contactos_raw.copy()
     df_contactos.columns = df_contactos.columns.astype(str).str.strip()
     cols_c = list(df_contactos.columns)
@@ -214,7 +230,6 @@ try:
     df_contactos['Contacto_Nombre'] = df_contactos[col_contacto]
     df_contactos['Email'] = df_contactos[col_email]
     
-    # Procesamiento de Planilla Principal de Remitos
     df = df_raw.copy()
     df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
     df['Num_Tambo'] = df['Num_Tambo'].astype(str).str.strip()
@@ -243,10 +258,7 @@ try:
                 partes = str(val).strip().split()
                 if len(partes) >= 2:
                     tambo_limpio = partes[0].replace('T', '').replace('t', '').strip()
-                    try:
-                        fecha_limpia = pd.to_datetime(partes[1], format='%d%m%Y', errors='coerce')
-                    except:
-                        fecha_limpia = None
+                    fecha_limpia = limpiar_fecha_lab(partes[1])
                     
                     lista_tambo.append(tambo_limpio)
                     lista_fecha.append(fecha_limpia)
@@ -281,7 +293,6 @@ try:
         except Exception as err_lab:
             st.sidebar.error(f"Error procesando lab desde Drive: {err_lab}")
     
-    # Agrupación por Ciclo Operativo (Sábado a Viernes)
     df['Fecha_Cierre_Viernes'] = df['Fecha'] + pd.to_timedelta((4 - df['Fecha'].dt.weekday) % 7, unit='D')
     df['Fecha_Inicio_Sabado'] = df['Fecha_Cierre_Viernes'] - pd.Timedelta(days=6)
     
