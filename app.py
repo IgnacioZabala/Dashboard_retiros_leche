@@ -21,7 +21,7 @@ url_drive = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
 def cargar_datos_drive(url):
     # Carga la hoja principal de remitos con filtro de columnas
     df_remitos = pd.read_excel(url, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
-    # Carga la solapa de contactos de tambos completa (sin restricciones de columnas)
+    # Carga la solapa de contactos de tambos completa de forma segura
     df_contactos = pd.read_excel(url, sheet_name='Código Tambos')
     return df_remitos, df_contactos
 
@@ -142,12 +142,20 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
 try:
     df_raw, df_contactos_raw = cargar_datos_drive(url_drive)
     
-    # Procesar contactos de tambos de forma flexible según las columnas existentes
+    # Procesamiento inteligente y flexible de la solapa de contactos
     df_contactos = df_contactos_raw.copy()
-    # Tomamos las columnas por posición para asegurarnos que no falle si cambian de nombre exacto
-    df_contactos = df_contactos.iloc[:, :5] # Tomamos las primeras 5 columnas (A, B, C, D, E)
-    df_contactos.columns = ['Codigo_Viejo', 'Num_Tambo', 'Tambo_Contacto', 'Contacto_Nombre', 'Email']
-    df_contactos['Num_Tambo'] = df_contactos['Num_Tambo'].astype(str).str.strip()
+    
+    # Limpiamos nombres de columnas quitando espacios vacíos
+    df_contactos.columns = df_contactos.columns.astype(str).str.strip()
+    
+    # Identificación segura de columnas clave independientemente de cuántas haya
+    col_codigo = next((c for c in df_contactos.columns if 'código' in c.lower() or 'codigo' in c.lower() and 'viejo' not in c.lower()), df_contactos.columns[1] if len(df_contactos.columns) > 1 else df_contactos.columns[0])
+    col_contacto = next((c for c in df_contactos.columns if 'contacto' in c.lower() or 'nombre' in c.lower()), df_contactos.columns[3] if len(df_contactos.columns) > 3 else df_contactos.columns[0])
+    col_email = next((c for c in df_contactos.columns if 'email' in c.lower() or 'correo' in c.lower()), df_contactos.columns[4] if len(df_contactos.columns) > 4 else df_contactos.columns[0])
+    
+    df_contactos['Num_Tambo'] = df_contactos[col_codigo].astype(str).str.strip()
+    df_contactos['Contacto_Nombre'] = df_contactos[col_contacto]
+    df_contactos['Email'] = df_contactos[col_email]
     
     df = df_raw.copy()
     df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
@@ -231,15 +239,17 @@ try:
         
         st.subheader(f"Resumen Cierre Viernes ({f_inicio} al {f_fin}) - {tambo_nombre_seleccionado} (Código #{tambo_seleccionado})")
         
-        # Buscar datos de contacto en la solapa 2
+        # Buscar datos de contacto de forma segura
         info_contacto = df_contactos[df_contactos['Num_Tambo'] == str(tambo_seleccionado)]
         email_tambo = ""
         nombre_contacto = "Productor"
         if not info_contacto.empty:
-            if pd.notna(info_contacto['Email'].values[0]):
-                email_tambo = str(info_contacto['Email'].values[0]).strip()
-            if pd.notna(info_contacto['Contacto_Nombre'].values[0]):
-                nombre_contacto = str(info_contacto['Contacto_Nombre'].values[0]).strip()
+            val_email = info_contacto['Email'].values[0]
+            val_nombre = info_contacto['Contacto_Nombre'].values[0]
+            if pd.notna(val_email):
+                email_tambo = str(val_email).strip()
+            if pd.notna(val_nombre):
+                nombre_contacto = str(val_nombre).strip()
 
         fecha_viernes_actual = df_tambo_semana['Fecha_Cierre_Viernes'].iloc[0]
         fecha_viernes_anterior = fecha_viernes_actual - pd.Timedelta(days=7)
