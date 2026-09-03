@@ -19,10 +19,10 @@ url_drive = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
 
 @st.cache_data(ttl=60)
 def cargar_datos_drive(url):
-    # Carga la hoja principal de remitos
+    # Carga la hoja principal de remitos con filtro de columnas
     df_remitos = pd.read_excel(url, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
-    # Carga la solapa de contactos de tambos
-    df_contactos = pd.read_excel(url, sheet_name='Código Tambos', skiprows=0, usecols="A:E")
+    # Carga la solapa de contactos de tambos completa (sin restricciones de columnas)
+    df_contactos = pd.read_excel(url, sheet_name='Código Tambos')
     return df_remitos, df_contactos
 
 # --- FUNCIONES DE FORMATO ---
@@ -142,8 +142,10 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
 try:
     df_raw, df_contactos_raw = cargar_datos_drive(url_drive)
     
-    # Procesar contactos de tambos
+    # Procesar contactos de tambos de forma flexible según las columnas existentes
     df_contactos = df_contactos_raw.copy()
+    # Tomamos las columnas por posición para asegurarnos que no falle si cambian de nombre exacto
+    df_contactos = df_contactos.iloc[:, :5] # Tomamos las primeras 5 columnas (A, B, C, D, E)
     df_contactos.columns = ['Codigo_Viejo', 'Num_Tambo', 'Tambo_Contacto', 'Contacto_Nombre', 'Email']
     df_contactos['Num_Tambo'] = df_contactos['Num_Tambo'].astype(str).str.strip()
     
