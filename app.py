@@ -33,14 +33,41 @@ def cargar_datos_drive(u_remitos, u_lab):
         
     return df_remitos, df_contactos, df_lab
 
-# --- FUNCIONES DE FORMATO ---
+# --- FUNCIONES DE FORMATO Y LIMPIEZA ---
 def formato_miles(valor):
     return f"{valor:,.0f}".replace(',', '.')
 
 def formato_temp(valor):
     if pd.isna(valor):
         return '-'
-    return f"{valor:.1f}".replace('.', ',') + "°"
+    return f"{valor:.1f}".replace('.', ',) + "°"
+
+def limpiar_tambo(val):
+    if pd.isna(val):
+        return ""
+    s = str(val).strip()
+    s = s.replace('T', '').replace('t', '')
+    if '.' in s:
+        try:
+            s = str(int(float(s)))
+        except:
+            pass
+    return s.strip()
+
+def limpiar_fecha_lab(texto_fecha):
+    if pd.isna(texto_fecha):
+        return None
+    texto_fecha = str(texto_fecha).strip()
+    if texto_fecha.isdigit() and len(texto_fecha) == 8:
+        try:
+            return pd.to_datetime(texto_fecha, format='%d%m%Y', errors='coerce').normalize()
+        except:
+            return None
+    else:
+        try:
+            return pd.to_datetime(texto_fecha, dayfirst=True, errors='coerce').normalize()
+        except:
+            return None
 
 # --- FUNCIÓN PARA GENERAR EL PDF ---
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_comp, hay_datos_previos):
@@ -201,6 +228,7 @@ def enviar_correo_productor(destinatario_email, nombre_contacto, tambo_nombre, p
 try:
     df_raw, df_contactos_raw, df_lab_raw = cargar_datos_drive(url_remitos, url_lab)
     
+    # Procesar contactos
     df_contactos = df_contactos_raw.copy()
     df_contactos.columns = df_contactos.columns.astype(str).str.strip()
     cols_c = list(df_contactos.columns)
@@ -209,19 +237,19 @@ try:
     col_contacto = next((c for c in cols_c if 'contacto' in c.lower() or 'nombre' in c.lower()), cols_c[3] if len(cols_c) > 3 else cols_c[min(2, len(cols_c)-1)])
     col_email = next((c for c in cols_c if 'email' in c.lower() or 'correo' in c.lower()), cols_c[4] if len(cols_c) > 4 else cols_c[min(len(cols_c)-1, len(cols_c)-1)])
     
-    df_contactos['Num_Tambo'] = df_contactos[col_codigo].astype(str).str.strip()
+    df_contactos['Num_Tambo'] = df_contactos[col_codigo].apply(limpiar_tambo)
     df_contactos['Contacto_Nombre'] = df_contactos[col_contacto]
     df_contactos['Email'] = df_contactos[col_email]
     
     # Procesamiento de Planilla Principal de Remitos
     df = df_raw.copy()
     df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
-    df['Num_Tambo'] = df['Num_Tambo'].astype(str).str.strip()
+    df['Num_Tambo'] = df['Num_Tambo'].apply(limpiar_tambo)
     df = df.dropna(subset=['Fecha'])
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce').dt.normalize()
     df = df.dropna(subset=['Fecha']) 
 
-    # --- CRUCE ESTRICTO POR FECHA Y NÚMERO DE TAMBO (IGNORANDO HORA) ---
+    # --- CRUCE ESTRICTO Y LIMPIO CON EL ARCHIVO DE LABORATORIO ---
     if not df_lab_raw.empty:
         try:
             df_lab = df_lab_raw.copy()
@@ -242,29 +270,13 @@ try:
                 texto = str(val).strip()
                 partes = texto.split()
                 
-                tambo_limpio = None
-                fecha_limpia = None
-                
-                if len(partes) >= 1:
-                    tambo_limpio = partes[0].replace('T', '').replace('t', '').strip()
-                
-                if len(partes) >= 2:
-                    f_str = partes[1].strip()
-                    if f_str.isdigit() and len(f_str) == 8:
-                        try:
-                            fecha_limpia = pd.to_datetime(f_str, format='%d%m%Y', errors='coerce')
-                        except:
-                            fecha_limpia = None
-                    else:
-                        try:
-                            fecha_limpia = pd.to_datetime(f_str, dayfirst=True, errors='coerce')
-                        except:
-                            fecha_limpia = None
+                tambo_limpio = limpiar_tambo(partes[0]) if len(partes) >= 1 else None
+                fecha_limpia = limpiar_fecha_lab(partes[1]) if len(partes) >= 2 else None
                 
                 lista_tambo.append(tambo_limpio)
-                lista_fecha.append(fecha_limpia.normalize() if pd.notna(fecha_limpia) else None)
+                lista_fecha.append(fecha_limpia)
             
-            df_lab['Num_Tambo'] = [str(t).strip() if pd.notna(t) else None for t in lista_tambo]
+            df_lab['Num_Tambo'] = lista_tambo
             df_lab['Fecha'] = lista_fecha
             
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
@@ -280,15 +292,9 @@ try:
             if col_prot: cols_agg['Proteina_Lab'] = 'mean'
             
             if cols_agg:
-                # Agrupamos por Tambo y Fecha para unificar promedios por día y evitar duplicados
                 df_lab_clean = df_lab.dropna(subset=['Fecha', 'Num_Tambo']).groupby(['Num_Tambo', 'Fecha'], as_index=False).agg(cols_agg)
                 
-                df['Num_Tambo'] = df['Num_Tambo'].astype(str).str.strip()
-                df['Fecha'] = pd.to_datetime(df['Fecha']).dt.normalize()
-                
-                df_lab_clean['Num_Tambo'] = df_lab_clean['Num_Tambo'].astype(str).str.strip()
-                df_lab_clean['Fecha'] = pd.to_datetime(df_lab_clean['Fecha']).dt.normalize()
-                
+                # Merge estricto usando llaves limpias
                 df = pd.merge(df, df_lab_clean, on=['Num_Tambo', 'Fecha'], how='left')
                 
                 if 'Grasa_Lab' in df.columns:
