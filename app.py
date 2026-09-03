@@ -40,7 +40,7 @@ def formato_miles(valor):
 def formato_temp(valor):
     if pd.isna(valor):
         return '-'
-    return f"{valor:.1f}".replace('.', ',) + "°"
+    return f"{valor:.1f}".replace('.', ',') + "°"
 
 def limpiar_tambo(val):
     if pd.isna(val):
