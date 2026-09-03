@@ -11,27 +11,25 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
-st.title("Panel de recolección y liquidación por Tambo")
+st.title("🚜 Panel de Recolección y Liquidación por Tambo")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE ---
-FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" # Tu archivo principal (Remitos y Contactos)
-FILE_ID_LAB = "1NNYjM5Aqg9iDdJ85UoALRim8P2A1kaUD" # Reemplaza con el ID de tu archivo de laboratorio en Drive
+FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" # Archivo principal (Remitos y Contactos)
+FILE_ID_LAB = "1NNYjM5Aqg9iDdJ85UoALRim8P2A1kaUD"      # Archivo de Laboratorio (actualizado con tu ID)
 
 url_remitos = f"https://drive.google.com/uc?export=download&id={FILE_ID_REMITOS}"
 url_lab = f"https://drive.google.com/uc?export=download&id={FILE_ID_LAB}"
 
 @st.cache_data(ttl=60)
 def cargar_datos_drive(u_remitos, u_lab):
-    # Carga planilla principal y solapa de contactos
     df_remitos = pd.read_excel(u_remitos, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
     df_contactos = pd.read_excel(u_remitos, sheet_name='Código Tambos')
     
-    # Carga archivo de laboratorio desde Google Drive de forma segura
     try:
         df_lab = pd.read_excel(u_lab)
     except Exception as e:
         df_lab = pd.DataFrame()
-        st.warning(f"No se pudo cargar el archivo de laboratorio desde Drive. Verificá el ID. Detalle: {e}")
+        st.warning(f"No se pudo cargar el archivo de laboratorio desde Drive. Detalle: {e}")
         
     return df_remitos, df_contactos, df_lab
 
@@ -203,13 +201,14 @@ def enviar_correo_productor(destinatario_email, nombre_contacto, tambo_nombre, p
 try:
     df_raw, df_contactos_raw, df_lab_raw = cargar_datos_drive(url_remitos, url_lab)
     
-    # Procesar contactos de tambos de forma segura
+    # Procesar contactos de tambos de forma 100% segura contra index out of bounds
     df_contactos = df_contactos_raw.copy()
     df_contactos.columns = df_contactos.columns.astype(str).str.strip()
+    cols_c = list(df_contactos.columns)
     
-    col_codigo = 'Código' if 'Código' in df_contactos.columns else df_contactos.columns[1]
-    col_contacto = 'Contacto (nombre)' if 'Contacto (nombre)' in df_contactos.columns else df_contactos.columns[3]
-    col_email = 'Email' if 'Email' in df_contactos.columns else df_contactos.columns[4]
+    col_codigo = next((c for c in cols_c if 'código' in c.lower() or 'codigo' in c.lower() and 'viejo' not in c.lower()), cols_c[1] if len(cols_c) > 1 else cols_c[0])
+    col_contacto = next((c for c in cols_c if 'contacto' in c.lower() or 'nombre' in c.lower()), cols_c[3] if len(cols_c) > 3 else cols_c[min(2, len(cols_c)-1)])
+    col_email = next((c for c in cols_c if 'email' in c.lower() or 'correo' in c.lower()), cols_c[4] if len(cols_c) > 4 else cols_c[min(len(cols_c)-1, len(cols_c)-1)])
     
     df_contactos['Num_Tambo'] = df_contactos[col_codigo].astype(str).str.strip()
     df_contactos['Contacto_Nombre'] = df_contactos[col_contacto]
@@ -229,14 +228,12 @@ try:
             df_lab = df_lab_raw.copy()
             df_lab.columns = df_lab.columns.astype(str).str.strip()
             
-            # Buscar la columna que contenga las muestras (ej: Sample number)
             matching_cols = [c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower()]
             col_sample = matching_cols[0] if matching_cols else df_lab.columns[0]
             
             lista_tambo = []
             lista_fecha = []
             
-            # Recorrido fila por fila blindado contra index out of bounds
             for val in df_lab[col_sample]:
                 if pd.isna(val):
                     lista_tambo.append(None)
@@ -260,7 +257,6 @@ try:
             df_lab['Num_Tambo'] = lista_tambo
             df_lab['Fecha'] = lista_fecha
             
-            # Búsqueda flexible de columnas de Grasa (Fat) y Proteína (Protein)
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
             col_prot = next((c for c in df_lab.columns if 'protein' in c.lower() or 'proteina' in c.lower()), None)
             
@@ -275,7 +271,6 @@ try:
             
             df_lab_clean = df_lab[cols_merge].dropna(subset=['Fecha', 'Num_Tambo'])
             
-            # Cruzar con la tabla principal
             df = pd.merge(df, df_lab_clean, on=['Num_Tambo', 'Fecha'], how='left')
             
             if 'Grasa_Lab' in df.columns:
