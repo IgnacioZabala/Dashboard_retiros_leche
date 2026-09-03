@@ -13,15 +13,27 @@ from email import encoders
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
 st.title("Panel de recolección y liquidación por Tambo")
 
-# --- CONFIGURACIÓN DE GOOGLE DRIVE (Archivo Principal: Remitos y Contactos) ---
-FILE_ID = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
-url_drive = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
+# --- CONFIGURACIÓN DE GOOGLE DRIVE ---
+FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" # Tu archivo principal (Remitos y Contactos)
+FILE_ID_LAB = "1NNYjM5Aqg9iDdJ85UoALRim8P2A1kaUD" # Reemplaza con el ID de tu archivo de laboratorio en Drive
+
+url_remitos = f"https://drive.google.com/uc?export=download&id={FILE_ID_REMITOS}"
+url_lab = f"https://drive.google.com/uc?export=download&id={FILE_ID_LAB}"
 
 @st.cache_data(ttl=60)
-def cargar_datos_drive(url):
-    df_remitos = pd.read_excel(url, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
-    df_contactos = pd.read_excel(url, sheet_name='Código Tambos')
-    return df_remitos, df_contactos
+def cargar_datos_drive(u_remitos, u_lab):
+    # Carga planilla principal y solapa de contactos
+    df_remitos = pd.read_excel(u_remitos, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
+    df_contactos = pd.read_excel(u_remitos, sheet_name='Código Tambos')
+    
+    # Carga archivo de laboratorio desde Google Drive de forma segura
+    try:
+        df_lab = pd.read_excel(u_lab)
+    except Exception as e:
+        df_lab = pd.DataFrame()
+        st.warning(f"No se pudo cargar el archivo de laboratorio desde Drive. Verificá el ID. Detalle: {e}")
+        
+    return df_remitos, df_contactos, df_lab
 
 # --- FUNCIONES DE FORMATO ---
 def formato_miles(valor):
@@ -189,13 +201,8 @@ def enviar_correo_productor(destinatario_email, nombre_contacto, tambo_nombre, p
 
 # --- CARGA Y PROCESAMIENTO DE DATOS ---
 try:
-    df_raw, df_contactos_raw = cargar_datos_drive(url_drive)
+    df_raw, df_contactos_raw, df_lab_raw = cargar_datos_drive(url_remitos, url_lab)
     
-    # Selector en barra lateral para el archivo de laboratorio externo
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🔬 Archivo de Laboratorio")
-    archivo_lab_subido = st.sidebar.file_uploader("Subir Excel de Lab (Grasa/Proteína)", type=["xlsx", "xls"])
-
     # Procesar contactos de tambos de forma segura
     df_contactos = df_contactos_raw.copy()
     df_contactos.columns = df_contactos.columns.astype(str).str.strip()
@@ -216,11 +223,10 @@ try:
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
     df = df.dropna(subset=['Fecha']) 
 
- # --- CRUCE SEGURO CON EL ARCHIVO DE LABORATORIO SUBIDO ---
-    if archivo_lab_subido is not None:
+    # --- CRUCE SEGURO CON EL ARCHIVO DE LABORATORIO DE GOOGLE DRIVE ---
+    if not df_lab_raw.empty:
         try:
-            # Leemos el excel de laboratorio
-            df_lab = pd.read_excel(archivo_lab_subido)
+            df_lab = df_lab_raw.copy()
             df_lab.columns = df_lab.columns.astype(str).str.strip()
             
             # Buscar la columna que contenga las muestras (ej: Sample number)
@@ -230,7 +236,7 @@ try:
             lista_tambo = []
             lista_fecha = []
             
-            # Recorremos fila por fila de forma segura para evitar index out of bounds
+            # Recorrido fila por fila blindado contra index out of bounds
             for val in df_lab[col_sample]:
                 if pd.isna(val):
                     lista_tambo.append(None)
@@ -238,7 +244,6 @@ try:
                     continue
                 
                 partes = str(val).strip().split()
-                # Validamos estrictamente que tenga al menos el formato 'T10 29072026'
                 if len(partes) >= 2:
                     tambo_limpio = partes[0].replace('T', '').replace('t', '').strip()
                     try:
@@ -279,7 +284,7 @@ try:
                 df['Proteina'] = df['Proteina_Lab'].combine_first(df['Proteina'])
                 
         except Exception as err_lab:
-            st.sidebar.error(f"Error procesando lab: {err_lab}")
+            st.sidebar.error(f"Error procesando lab desde Drive: {err_lab}")
     
     # Agrupación por Ciclo Operativo (Sábado a Viernes)
     df['Fecha_Cierre_Viernes'] = df['Fecha'] + pd.to_timedelta((4 - df['Fecha'].dt.weekday) % 7, unit='D')
@@ -477,4 +482,4 @@ try:
         st.warning("No hay registros para este tambo en el período seleccionado.")
         
 except Exception as e:
-    st.error(f"Error al cargar o procesar el archivo desde Google Drive o Laboratorio. Detalle técnico: {e}")
+    st.error(f"Error al cargar o procesar los archivos desde Google Drive. Detalle técnico: {e}")
