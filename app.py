@@ -4,6 +4,11 @@ from fpdf import FPDF
 import os
 import zipfile
 import io
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
 st.title("Panel de recolección y liquidación por Tambo")
@@ -14,7 +19,11 @@ url_drive = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
 
 @st.cache_data(ttl=60)
 def cargar_datos_drive(url):
-    return pd.read_excel(url, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
+    # Carga la hoja principal de remitos
+    df_remitos = pd.read_excel(url, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
+    # Carga la solapa de contactos de tambos
+    df_contactos = pd.read_excel(url, sheet_name='Código Tambos', skiprows=0, usecols="A:E")
+    return df_remitos, df_contactos
 
 # --- FUNCIONES DE FORMATO ---
 def formato_miles(valor):
@@ -62,20 +71,17 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     pdf.ln(3)
     pdf.set_font('Arial', 'B', 10)
     
-    # Total Litros (Incluye comparativa solo si hay datos previos y el checkbox está activo)
     texto_litros = f'Total Litros: {formato_miles(total_litros)} L'
     if mostrar_comp and hay_datos_previos:
         texto_litros += f' ({comp_litros})'
     pdf.cell(0, 6, texto_litros, ln=True)
     
-    # Temperatura
     if mostrar_temp:
         texto_temp = f'Temperatura Promedio: {formato_temp(temp_prom)}'
         if mostrar_comp and hay_datos_previos:
             texto_temp += f' ({comp_temp})'
         pdf.cell(0, 6, texto_temp, ln=True)
     
-    # Sólidos
     if (mostrar_grasa or mostrar_prot) and (pd.notna(grasa_prom) or pd.notna(proteina_prom)):
         partes_solidos = []
         if mostrar_grasa:
@@ -134,9 +140,17 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
 
 # --- CARGA Y PROCESAMIENTO DE DATOS ---
 try:
-    df_raw = cargar_datos_drive(url_drive)
+    df_raw, df_contactos_raw = cargar_datos_drive(url_drive)
+    
+    # Procesar contactos de tambos
+    df_contactos = df_contactos_raw.copy()
+    df_contactos.columns = ['Codigo_Viejo', 'Num_Tambo', 'Tambo_Contacto', 'Contacto_Nombre', 'Email']
+    df_contactos['Num_Tambo'] = df_contactos['Num_Tambo'].astype(str).str.strip()
+    
     df = df_raw.copy()
     df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
+    df['Num_Tambo'] = df['Num_Tambo'].astype(str).str.strip()
+    
     df = df.dropna(subset=['Fecha'])
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
     df = df.dropna(subset=['Fecha']) 
@@ -172,7 +186,7 @@ try:
     ver_comparacion = st.sidebar.checkbox("Incluir Comparativa vs. Semana Ant.", value=True)
 
     st.sidebar.divider()
-    st.sidebar.subheader("📦 Envío Masivo")
+    st.sidebar.subheader("📦 Envío Masivo & ZIP")
     generar_lote = st.sidebar.button("Generar ZIP con todos los Tambos")
 
     if generar_lote:
@@ -186,7 +200,6 @@ try:
                     f_ini = df_t['Fecha_Inicio_Sabado'].iloc[0].strftime('%d/%m/%Y')
                     f_fin = df_t['Fecha_Cierre_Viernes'].iloc[0].strftime('%d/%m/%Y')
                     
-                    # Chequear si tiene datos previos para el lote masivo
                     f_v_act = df_t['Fecha_Cierre_Viernes'].iloc[0]
                     f_v_ant = f_v_act - pd.Timedelta(days=7)
                     df_t_ant = df[(df['Num_Tambo'] == t_id) & (df['Fecha_Cierre_Viernes'] == f_v_ant)]
@@ -206,7 +219,7 @@ try:
             mime="application/zip"
         )
 
-    # --- VISTA INDIVIDUAL Y COMPARATIVA ---
+    # --- VISTA INDIVIDUAL Y ENVÍO DE MAIL ---
     st.divider()
     df_tambo_semana = df_semana_actual[df_semana_actual['Num_Tambo'] == tambo_seleccionado].sort_values('Fecha')
     
@@ -216,9 +229,19 @@ try:
         
         st.subheader(f"Resumen Cierre Viernes ({f_inicio} al {f_fin}) - {tambo_nombre_seleccionado} (Código #{tambo_seleccionado})")
         
+        # Buscar datos de contacto en la solapa 2
+        info_contacto = df_contactos[df_contactos['Num_Tambo'] == str(tambo_seleccionado)]
+        email_tambo = ""
+        nombre_contacto = "Productor"
+        if not info_contacto.empty:
+            if pd.notna(info_contacto['Email'].values[0]):
+                email_tambo = str(info_contacto['Email'].values[0]).strip()
+            if pd.notna(info_contacto['Contacto_Nombre'].values[0]):
+                nombre_contacto = str(info_contacto['Contacto_Nombre'].values[0]).strip()
+
         fecha_viernes_actual = df_tambo_semana['Fecha_Cierre_Viernes'].iloc[0]
         fecha_viernes_anterior = fecha_viernes_actual - pd.Timedelta(days=7)
-        df_tambo_anterior = df[(df['Num_Tambo'] == tambo_seleccionado) & (df['Fecha_Cierre_Viernes'] == fecha_viernes_anterior)]
+        df_tambo_anterior = df[(df['Num_Tambo'] == str(tambo_seleccionado)) & (df['Fecha_Cierre_Viernes'] == fecha_viernes_anterior)]
         
         litros_actual = df_tambo_semana['Litros_Ticket'].sum()
         temp_actual = df_tambo_semana['Temperatura'].mean()
@@ -297,12 +320,22 @@ try:
             ver_temperatura, ver_grasa, ver_proteina, ver_comparacion, hay_datos_previos
         )
         
-        st.download_button(
-            label=f"📄 Descargar PDF de {tambo_nombre_seleccionado} (Cierre {f_fin})",
-            data=pdf_bytes,
-            file_name=f"Resumen_{tambo_nombre_seleccionado.replace(' ', '_')}_Cierre_{f_fin.replace('/', '-')}.pdf",
-            mime="application/pdf"
-        )
+        # Botones de Acción (Descarga y Envío)
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            st.download_button(
+                label=f"📄 Descargar PDF de {tambo_nombre_seleccionado}",
+                data=pdf_bytes,
+                file_name=f"Resumen_{tambo_nombre_seleccionado.replace(' ', '_')}_Cierre_{f_fin.replace('/', '-')}.pdf",
+                mime="application/pdf"
+            )
+        with col_btn2:
+            st.info(f"📧 Correo registrado: **{email_tambo if email_tambo else 'No cargado en solapa Código Tambos'}**")
+            if st.button(f"📤 Enviar mail a {nombre_contacto}"):
+                if not email_tambo:
+                    st.error("No se puede enviar el correo porque este tambo no tiene un email registrado en la solapa 'Código Tambos'.")
+                else:
+                    st.success(f"Función lista para conectar con SMTP. Se enviaría a: {email_tambo} saludando a {nombre_contacto}.")
     else:
         st.warning("No hay registros para este tambo en el período seleccionado.")
         
