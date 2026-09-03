@@ -216,30 +216,44 @@ try:
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
     df = df.dropna(subset=['Fecha']) 
 
-    # --- CRUCE SEGURO CON EL ARCHIVO DE LABORATORIO SUBIDO ---
+ # --- CRUCE SEGURO CON EL ARCHIVO DE LABORATORIO SUBIDO ---
     if archivo_lab_subido is not None:
         try:
+            # Leemos el excel de laboratorio
             df_lab = pd.read_excel(archivo_lab_subido)
             df_lab.columns = df_lab.columns.astype(str).str.strip()
             
-            # Búsqueda flexible de la columna Sample number (o primera columna por defecto)
+            # Buscar la columna que contenga las muestras (ej: Sample number)
             matching_cols = [c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower()]
             col_sample = matching_cols[0] if matching_cols else df_lab.columns[0]
             
-            # Función segura para extraer tambo y fecha sin errores de índice
-            def extraer_tambo_fecha(texto):
-                if pd.isna(texto):
-                    return None, None
-                partes = str(texto).strip().split()
+            lista_tambo = []
+            lista_fecha = []
+            
+            # Recorremos fila por fila de forma segura para evitar index out of bounds
+            for val in df_lab[col_sample]:
+                if pd.isna(val):
+                    lista_tambo.append(None)
+                    lista_fecha.append(None)
+                    continue
+                
+                partes = str(val).strip().split()
+                # Validamos estrictamente que tenga al menos el formato 'T10 29072026'
                 if len(partes) >= 2:
-                    tambo = partes[0].replace('T', '').replace('t', '').strip()
-                    fecha = pd.to_datetime(partes[1], format='%d%m%Y', errors='coerce')
-                    return tambo, fecha
-                return None, None
-
-            res_extraccion = df_lab[col_sample].apply(extraer_tambo_fecha)
-            df_lab['Num_Tambo'] = [x[0] for x in res_extraccion]
-            df_lab['Fecha'] = [x[1] for x in res_extraccion]
+                    tambo_limpio = partes[0].replace('T', '').replace('t', '').strip()
+                    try:
+                        fecha_limpia = pd.to_datetime(partes[1], format='%d%m%Y', errors='coerce')
+                    except:
+                        fecha_limpia = None
+                    
+                    lista_tambo.append(tambo_limpio)
+                    lista_fecha.append(fecha_limpia)
+                else:
+                    lista_tambo.append(None)
+                    lista_fecha.append(None)
+            
+            df_lab['Num_Tambo'] = lista_tambo
+            df_lab['Fecha'] = lista_fecha
             
             # Búsqueda flexible de columnas de Grasa (Fat) y Proteína (Protein)
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
@@ -263,6 +277,7 @@ try:
                 df['Grasa'] = df['Grasa_Lab'].combine_first(df['Grasa'])
             if 'Proteina_Lab' in df.columns:
                 df['Proteina'] = df['Proteina_Lab'].combine_first(df['Proteina'])
+                
         except Exception as err_lab:
             st.sidebar.error(f"Error procesando lab: {err_lab}")
     
