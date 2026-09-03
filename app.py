@@ -14,16 +14,24 @@ st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layo
 st.title("Panel de recolección y liquidación por Tambo")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE ---
+# ID de tu archivo principal (Remitos y Contactos) y de Laboratorio (si están separados o en el mismo)
 FILE_ID = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
 url_drive = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
 
 @st.cache_data(ttl=60)
 def cargar_datos_drive(url):
-    # Carga la hoja principal de remitos con filtro de columnas
     df_remitos = pd.read_excel(url, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
-    # Carga la solapa de contactos de tambos completa de forma segura
     df_contactos = pd.read_excel(url, sheet_name='Código Tambos')
-    return df_remitos, df_contactos
+    
+    # Nota: Si el archivo de laboratorio está en otra solapa o archivo, podés sumarlo acá. 
+    # Por ahora, simulamos la lectura de la solapa de laboratorio si estuviera integrada, 
+    # o podés agregar un segundo uploader/enlace si viene de otro archivo externo.
+    try:
+        df_lab = pd.read_excel(url, sheet_name='Laboratorio')
+    except:
+        df_lab = pd.DataFrame() # DataFrame vacío por si aún no está creada la solapa
+        
+    return df_remitos, df_contactos, df_lab
 
 # --- FUNCIONES DE FORMATO ---
 def formato_miles(valor):
@@ -39,7 +47,6 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     pdf = FPDF()
     pdf.add_page()
     
-    # --- LOGO CENTRADO ---
     ruta_logo = "logo.png"
     if os.path.exists(ruta_logo):
         pdf.image(ruta_logo, x=80, y=10, w=50)
@@ -47,7 +54,6 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     else:
         pdf.set_y(15)
     
-    # --- TÍTULO CENTRADO ---
     pdf.set_font('Arial', 'B', 12)
     pdf.set_text_color(100, 100, 100)
     pdf.cell(0, 6, 'Resumen semanal de recoleccion', ln=True, align='C')
@@ -56,7 +62,6 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     pdf.ln(4)
     pdf.line(15, pdf.get_y(), 195, pdf.get_y()) 
     
-    # --- DATOS DEL PRODUCTOR ---
     pdf.ln(6)
     pdf.set_font('Arial', 'B', 11)
     pdf.cell(0, 7, f'Productor: {tambo_nombre} (Codigo #{tambo_id})', ln=True)
@@ -95,7 +100,6 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     
     pdf.ln(6)
     
-    # --- TABLA DE DETALLE ---
     pdf.set_font('Arial', 'B', 9)
     pdf.set_fill_color(200, 220, 255)
     pdf.cell(35, 8, 'Fecha', 1, 0, 'C', fill=True)
@@ -138,17 +142,68 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
         
     return bytes(pdf.output(dest='S'), encoding='latin-1')
 
+# --- FUNCIÓN PARA ENVIAR CORREO CON HTML Y FIRMA ---
+def enviar_correo_productor(destinatario_email, nombre_contacto, tambo_nombre, pdf_bytes, nombre_archivo):
+    try:
+        remitente = st.secrets["email"]["remitente"]
+        password = st.secrets["email"]["password"]
+        
+        msg = MIMEMultipart()
+        msg['From'] = remitente
+        msg['To'] = destinatario_email
+        msg['Subject'] = f"Resumen Semanal de Recolección - {tambo_nombre}"
+        
+        cuerpo_html = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; color: #333;">
+            <p>Buenas tardes, <b>{nombre_contacto}</b>:</p>
+            <p>Te adjunto el resumen correspondiente a la recolección de leche y calidad de esta semana para el establecimiento <b>{tambo_nombre}</b>.</p>
+            <p>Cualquier consulta quedo a tu disposición.</p>
+            <br>
+            <p>Saludos cordiales,</p>
+            <hr style="border: none; border-top: 1px solid #ccc; width: 300px; text-align: left;">
+            <table style="font-size: 13px; color: #555;">
+                <tr>
+                    <td style="vertical-align: middle; padding-right: 15px;">
+                        <img src="https://i.imgur.com/tu_foto_ejemplo.png" width="70" style="border-radius: 50%;">
+                    </td>
+                    <td style="vertical-align: middle;">
+                        <b>Ignacio Zabala</b><br>
+                        Coopagro Planta Tandil<br>
+                        <i>Gestión y Calidad</i>
+                    </td>
+                </tr>
+            </table>
+            <br>
+            <img src="https://i.imgur.com/tu_banner_coopagro.png" width="400">
+        </body>
+        </html>
+        """
+        msg.attach(MIMEText(cuerpo_html, 'html'))
+        
+        part = MIMEBase('application', 'octet-stream')
+        part.set_payload(pdf_bytes)
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', f'attachment; filename="{nombre_archivo}"')
+        msg.attach(part)
+        
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(remitente, password)
+        server.sendmail(remitente, destinatario_email, msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"Error enviando correo: {e}")
+        return False
+
 # --- CARGA Y PROCESAMIENTO DE DATOS ---
 try:
-    df_raw, df_contactos_raw = cargar_datos_drive(url_drive)
+    df_raw, df_contactos_raw, df_lab_raw = cargar_datos_drive(url_drive)
     
-    # Procesamiento inteligente y flexible de la solapa de contactos
+    # Procesar contactos de tambos
     df_contactos = df_contactos_raw.copy()
-    
-    # Limpiamos nombres de columnas quitando espacios vacíos
     df_contactos.columns = df_contactos.columns.astype(str).str.strip()
-    
-    # Identificación segura de columnas clave independientemente de cuántas haya
     col_codigo = next((c for c in df_contactos.columns if 'código' in c.lower() or 'codigo' in c.lower() and 'viejo' not in c.lower()), df_contactos.columns[1] if len(df_contactos.columns) > 1 else df_contactos.columns[0])
     col_contacto = next((c for c in df_contactos.columns if 'contacto' in c.lower() or 'nombre' in c.lower()), df_contactos.columns[3] if len(df_contactos.columns) > 3 else df_contactos.columns[0])
     col_email = next((c for c in df_contactos.columns if 'email' in c.lower() or 'correo' in c.lower()), df_contactos.columns[4] if len(df_contactos.columns) > 4 else df_contactos.columns[0])
@@ -157,13 +212,57 @@ try:
     df_contactos['Contacto_Nombre'] = df_contactos[col_contacto]
     df_contactos['Email'] = df_contactos[col_email]
     
+    # Procesamiento de Planilla Principal de Remitos
     df = df_raw.copy()
     df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
     df['Num_Tambo'] = df['Num_Tambo'].astype(str).str.strip()
-    
     df = df.dropna(subset=['Fecha'])
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
     df = df.dropna(subset=['Fecha']) 
+
+    # --- PROCESAMIENTO Y CRUCE DE LABORATORIO (Basado en la estructura "Sample number": T10 29072026 9:15) ---
+    if not df_lab_raw.empty:
+        df_lab = df_lab_raw.copy()
+        # Asumimos que la primera columna es 'Sample number' y contiene el texto con formato 'T10 DDMMYYYY HH:MM'
+        col_sample = df_lab.columns[0]
+        
+        # Limpieza y extracción: Dividimos el texto por espacios
+        # Ejemplo: "T10 29072026 9:15" -> Partes: ['T10', '29072026', '9:15']
+        temp_split = df_lab[col_sample].astype(str).str.strip().str.split(' ', expand=True)
+        
+        if temp_split.shape[1] >= 2:
+            # Extraer número de tambo (ej: 'T10' -> '10')
+            df_lab['Num_Tambo'] = temp_split[0].str.replace('T', '', case=False).str.strip()
+            
+            # Extraer fecha (ej: '29072026' -> Día 29, Mes 07, Año 2026) y descartar hora
+            fecha_str = temp_split[1]
+            df_lab['Fecha'] = pd.to_datetime(fecha_str, format='%d%m%Y', errors='coerce')
+            
+            # Renombrar columnas de laboratorio relevantes (ej: Fat -> Grasa, Protein -> Proteina)
+            # Buscamos las columnas de grasa y proteína de forma flexible
+            col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
+            col_prot = next((c for c in df_lab.columns if 'protein' in c.lower() or 'proteina' in c.lower()), None)
+            
+            if col_fat:
+                df_lab['Grasa_Lab'] = pd.to_numeric(df_lab[col_fat], errors='coerce')
+            if col_prot:
+                df_lab['Proteina_Lab'] = pd.to_numeric(df_lab[col_prot], errors='coerce')
+                
+            # Seleccionar columnas clave para el merge
+            cols_merge = ['Num_Tambo', 'Fecha']
+            if col_fat: cols_merge.append('Grasa_Lab')
+            if col_prot: cols_merge.append('Proteina_Lab')
+            
+            df_lab_clean = df_lab[cols_merge].dropna(subset=['Fecha', 'Num_Tambo'])
+            
+            # Cruzar (Merge) con la tabla principal por Fecha y Número de Tambo
+            df = pd.merge(df, df_lab_clean, on=['Num_Tambo', 'Fecha'], how='left')
+            
+            # Si vinieron datos de laboratorio, actualizamos las columnas de Grasa y Proteína del reporte
+            if 'Grasa_Lab' in df.columns:
+                df['Grasa'] = df['Grasa_Lab'].combine_first(df['Grasa'])
+            if 'Proteina_Lab' in df.columns:
+                df['Proteina'] = df['Proteina_Lab'].combine_first(df['Proteina'])
     
     # Agrupación por Ciclo Operativo (Sábado a Viernes)
     df['Fecha_Cierre_Viernes'] = df['Fecha'] + pd.to_timedelta((4 - df['Fecha'].dt.weekday) % 7, unit='D')
@@ -187,7 +286,6 @@ try:
     
     tambo_seleccionado = mapeo_tambos[mapeo_tambos['Tambo'] == tambo_nombre_seleccionado]['Num_Tambo'].values[0]
 
-    # --- CHECKBOXES DE CONFIGURACIÓN DEL REPORTE ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚙️ Elementos del Reporte")
     ver_temperatura = st.sidebar.checkbox("Incluir Temperatura", value=True)
@@ -229,9 +327,9 @@ try:
             mime="application/zip"
         )
 
-    # --- VISTA INDIVIDUAL Y ENVÍO DE MAIL ---
+    # --- VISTA INDIVIDUAL Y ENVÍO DE MAIL REAL ---
     st.divider()
-    df_tambo_semana = df_semana_actual[df_semana_actual['Num_Tambo'] == tambo_seleccionado].sort_values('Fecha')
+    df_tambo_semana = df_semana_actual[df_semana_actual['Num_Tambo'] == str(tambo_seleccionado)].sort_values('Fecha')
     
     if not df_tambo_semana.empty:
         f_inicio = df_tambo_semana['Fecha_Inicio_Sabado'].iloc[0].strftime('%d/%m/%Y')
@@ -239,7 +337,6 @@ try:
         
         st.subheader(f"Resumen Cierre Viernes ({f_inicio} al {f_fin}) - {tambo_nombre_seleccionado} (Código #{tambo_seleccionado})")
         
-        # Buscar datos de contacto de forma segura
         info_contacto = df_contactos[df_contactos['Num_Tambo'] == str(tambo_seleccionado)]
         email_tambo = ""
         nombre_contacto = "Productor"
@@ -332,13 +429,14 @@ try:
             ver_temperatura, ver_grasa, ver_proteina, ver_comparacion, hay_datos_previos
         )
         
-        # Botones de Acción (Descarga y Envío)
+        nombre_pdf_salida = f"Resumen_{tambo_nombre_seleccionado.replace(' ', '_')}_Cierre_{f_fin.replace('/', '-')}.pdf"
+
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
             st.download_button(
                 label=f"📄 Descargar PDF de {tambo_nombre_seleccionado}",
                 data=pdf_bytes,
-                file_name=f"Resumen_{tambo_nombre_seleccionado.replace(' ', '_')}_Cierre_{f_fin.replace('/', '-')}.pdf",
+                file_name=nombre_pdf_salida,
                 mime="application/pdf"
             )
         with col_btn2:
@@ -347,7 +445,12 @@ try:
                 if not email_tambo:
                     st.error("No se puede enviar el correo porque este tambo no tiene un email registrado en la solapa 'Código Tambos'.")
                 else:
-                    st.success(f"Función lista para conectar con SMTP. Se enviaría a: {email_tambo} saludando a {nombre_contacto}.")
+                    with st.spinner("Enviando correo electrónico..."):
+                        exito = enviar_correo_productor(email_tambo, nombre_contacto, tambo_nombre_seleccionado, pdf_bytes, nombre_pdf_salida)
+                        if exito:
+                            st.success(f"¡Correo enviado exitosamente a {email_tambo}!")
+                        else:
+                            st.error("Hubo un error al enviar el correo. Revisa la configuración de las credenciales SMTP en los secretos de Streamlit.")
     else:
         st.warning("No hay registros para este tambo en el período seleccionado.")
         
