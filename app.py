@@ -13,8 +13,7 @@ from email import encoders
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
 st.title("Panel de recolección y liquidación por Tambo")
 
-# --- CONFIGURACIÓN DE GOOGLE DRIVE ---
-# ID de tu archivo principal (Remitos y Contactos) y de Laboratorio (si están separados o en el mismo)
+# --- CONFIGURACIÓN DE GOOGLE DRIVE (Archivo Principal: Remitos y Contactos) ---
 FILE_ID = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
 url_drive = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
 
@@ -22,16 +21,7 @@ url_drive = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
 def cargar_datos_drive(url):
     df_remitos = pd.read_excel(url, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
     df_contactos = pd.read_excel(url, sheet_name='Código Tambos')
-    
-    # Nota: Si el archivo de laboratorio está en otra solapa o archivo, podés sumarlo acá. 
-    # Por ahora, simulamos la lectura de la solapa de laboratorio si estuviera integrada, 
-    # o podés agregar un segundo uploader/enlace si viene de otro archivo externo.
-    try:
-        df_lab = pd.read_excel(url, sheet_name='Laboratorio')
-    except:
-        df_lab = pd.DataFrame() # DataFrame vacío por si aún no está creada la solapa
-        
-    return df_remitos, df_contactos, df_lab
+    return df_remitos, df_contactos
 
 # --- FUNCIONES DE FORMATO ---
 def formato_miles(valor):
@@ -128,8 +118,8 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
             pdf.cell(30, 7, temp_val, 1, 0, 'C')
             
         if mostrar_grasa or mostrar_prot:
-            g_val = f"{row['Grasa']}%".replace('.', ',') if (mostrar_grasa and 'Grasa' in row and pd.notna(row['Grasa'])) else ('-' if mostrar_grasa else '')
-            p_val = f"{row['Proteina']}%".replace('.', ',') if (mostrar_prot and 'Proteina' in row and pd.notna(row['Proteina'])) else ('-' if mostrar_prot else '')
+            g_val = f"{row['Grasa']}%".replace('.', ',') if (mostrar_grasa and 'Grasa' in df_productor.columns and pd.notna(row['Grasa'])) else ('-' if mostrar_grasa else '')
+            p_val = f"{row['Proteina']}%".replace('.', ',') if (mostrar_prot and 'Proteina' in df_productor.columns and pd.notna(row['Proteina'])) else ('-' if mostrar_prot else '')
             
             if mostrar_grasa and mostrar_prot:
                 solidos_str = f"{g_val} / {p_val}"
@@ -142,7 +132,7 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
         
     return bytes(pdf.output(dest='S'), encoding='latin-1')
 
-# --- FUNCIÓN PARA ENVIAR CORREO CON HTML Y FIRMA ---
+# --- FUNCIÓN PARA ENVIAR CORREO ---
 def enviar_correo_productor(destinatario_email, nombre_contacto, tambo_nombre, pdf_bytes, nombre_archivo):
     try:
         remitente = st.secrets["email"]["remitente"]
@@ -199,14 +189,20 @@ def enviar_correo_productor(destinatario_email, nombre_contacto, tambo_nombre, p
 
 # --- CARGA Y PROCESAMIENTO DE DATOS ---
 try:
-    df_raw, df_contactos_raw, df_lab_raw = cargar_datos_drive(url_drive)
+    df_raw, df_contactos_raw = cargar_datos_drive(url_drive)
     
-    # Procesar contactos de tambos
+    # Selector en barra lateral para el archivo de laboratorio externo
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔬 Archivo de Laboratorio")
+    archivo_lab_subido = st.sidebar.file_uploader("Subir Excel de Lab (Grasa/Proteína)", type=["xlsx", "xls"])
+
+    # Procesar contactos de tambos de forma segura buscando la columna exacta 'Email'
     df_contactos = df_contactos_raw.copy()
     df_contactos.columns = df_contactos.columns.astype(str).str.strip()
-    col_codigo = next((c for c in df_contactos.columns if 'código' in c.lower() or 'codigo' in c.lower() and 'viejo' not in c.lower()), df_contactos.columns[1] if len(df_contactos.columns) > 1 else df_contactos.columns[0])
-    col_contacto = next((c for c in df_contactos.columns if 'contacto' in c.lower() or 'nombre' in c.lower()), df_contactos.columns[3] if len(df_contactos.columns) > 3 else df_contactos.columns[0])
-    col_email = next((c for c in df_contactos.columns if 'email' in c.lower() or 'correo' in c.lower()), df_contactos.columns[4] if len(df_contactos.columns) > 4 else df_contactos.columns[0])
+    
+    col_codigo = 'Código' if 'Código' in df_contactos.columns else df_contactos.columns[1]
+    col_contacto = 'Contacto (nombre)' if 'Contacto (nombre)' in df_contactos.columns else df_contactos.columns[3]
+    col_email = 'Email' if 'Email' in df_contactos.columns else df_contactos.columns[4]
     
     df_contactos['Num_Tambo'] = df_contactos[col_codigo].astype(str).str.strip()
     df_contactos['Contacto_Nombre'] = df_contactos[col_contacto]
@@ -220,26 +216,21 @@ try:
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
     df = df.dropna(subset=['Fecha']) 
 
-    # --- PROCESAMIENTO Y CRUCE DE LABORATORIO (Basado en la estructura "Sample number": T10 29072026 9:15) ---
-    if not df_lab_raw.empty:
-        df_lab = df_lab_raw.copy()
-        # Asumimos que la primera columna es 'Sample number' y contiene el texto con formato 'T10 DDMMYYYY HH:MM'
-        col_sample = df_lab.columns[0]
+    # --- CRUCE CON EL ARCHIVO DE LABORATORIO SUBIDO ---
+    if archivo_lab_subido is not None:
+        df_lab = pd.read_excel(archivo_lab_subido)
+        df_lab.columns = df_lab.columns.astype(str).str.strip()
         
-        # Limpieza y extracción: Dividimos el texto por espacios
-        # Ejemplo: "T10 29072026 9:15" -> Partes: ['T10', '29072026', '9:15']
+        # La columna es 'Sample number' (ej: T10 29072026 9:15)
+        col_sample = [c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower()][0]
+        
         temp_split = df_lab[col_sample].astype(str).str.strip().str.split(' ', expand=True)
         
         if temp_split.shape[1] >= 2:
-            # Extraer número de tambo (ej: 'T10' -> '10')
             df_lab['Num_Tambo'] = temp_split[0].str.replace('T', '', case=False).str.strip()
-            
-            # Extraer fecha (ej: '29072026' -> Día 29, Mes 07, Año 2026) y descartar hora
             fecha_str = temp_split[1]
             df_lab['Fecha'] = pd.to_datetime(fecha_str, format='%d%m%Y', errors='coerce')
             
-            # Renombrar columnas de laboratorio relevantes (ej: Fat -> Grasa, Protein -> Proteina)
-            # Buscamos las columnas de grasa y proteína de forma flexible
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
             col_prot = next((c for c in df_lab.columns if 'protein' in c.lower() or 'proteina' in c.lower()), None)
             
@@ -248,17 +239,15 @@ try:
             if col_prot:
                 df_lab['Proteina_Lab'] = pd.to_numeric(df_lab[col_prot], errors='coerce')
                 
-            # Seleccionar columnas clave para el merge
             cols_merge = ['Num_Tambo', 'Fecha']
             if col_fat: cols_merge.append('Grasa_Lab')
             if col_prot: cols_merge.append('Proteina_Lab')
             
             df_lab_clean = df_lab[cols_merge].dropna(subset=['Fecha', 'Num_Tambo'])
             
-            # Cruzar (Merge) con la tabla principal por Fecha y Número de Tambo
+            # Cruzar con la tabla principal
             df = pd.merge(df, df_lab_clean, on=['Num_Tambo', 'Fecha'], how='left')
             
-            # Si vinieron datos de laboratorio, actualizamos las columnas de Grasa y Proteína del reporte
             if 'Grasa_Lab' in df.columns:
                 df['Grasa'] = df['Grasa_Lab'].combine_first(df['Grasa'])
             if 'Proteina_Lab' in df.columns:
@@ -327,7 +316,7 @@ try:
             mime="application/zip"
         )
 
-    # --- VISTA INDIVIDUAL Y ENVÍO DE MAIL REAL ---
+    # --- VISTA INDIVIDUAL Y ENVÍO DE MAIL ---
     st.divider()
     df_tambo_semana = df_semana_actual[df_semana_actual['Num_Tambo'] == str(tambo_seleccionado)].sort_values('Fecha')
     
@@ -337,13 +326,14 @@ try:
         
         st.subheader(f"Resumen Cierre Viernes ({f_inicio} al {f_fin}) - {tambo_nombre_seleccionado} (Código #{tambo_seleccionado})")
         
+        # Buscar correo de forma segura (evita traer números sueltos si está vacío)
         info_contacto = df_contactos[df_contactos['Num_Tambo'] == str(tambo_seleccionado)]
         email_tambo = ""
         nombre_contacto = "Productor"
         if not info_contacto.empty:
             val_email = info_contacto['Email'].values[0]
             val_nombre = info_contacto['Contacto_Nombre'].values[0]
-            if pd.notna(val_email):
+            if pd.notna(val_email) and "@" in str(val_email):
                 email_tambo = str(val_email).strip()
             if pd.notna(val_nombre):
                 nombre_contacto = str(val_nombre).strip()
@@ -414,6 +404,12 @@ try:
         if ver_temperatura:
             df_mostrar['Temperatura'] = df_mostrar['Temperatura'].apply(lambda x: formato_temp(x))
             
+        # Formatear Grasa y Proteína para la tabla web si existen
+        if 'Grasa' in df_mostrar.columns:
+            df_mostrar['Grasa'] = df_mostrar['Grasa'].apply(lambda x: f"{x:.2f}%".replace('.', ',') if pd.notna(x) else '-')
+        if 'Proteina' in df_mostrar.columns:
+            df_mostrar['Proteina'] = df_mostrar['Proteina'].apply(lambda x: f"{x:.2f}%".replace('.', ',') if pd.notna(x) else '-')
+            
         df_mostrar = df_mostrar.rename(columns={
             'Litros_Ticket': 'Litros',
             'N_Remito': 'N° de remito',
@@ -440,19 +436,19 @@ try:
                 mime="application/pdf"
             )
         with col_btn2:
-            st.info(f"📧 Correo registrado: **{email_tambo if email_tambo else 'No cargado en solapa Código Tambos'}**")
+            st.info(f"📧 Correo registrado: **{email_tambo if email_tambo else 'No cargado o sin formato de email'}**")
             if st.button(f"📤 Enviar mail a {nombre_contacto}"):
                 if not email_tambo:
-                    st.error("No se puede enviar el correo porque este tambo no tiene un email registrado en la solapa 'Código Tambos'.")
+                    st.error("No se puede enviar el correo porque este tambo no tiene un email válido registrado en la solapa 'Código Tambos'.")
                 else:
                     with st.spinner("Enviando correo electrónico..."):
                         exito = enviar_correo_productor(email_tambo, nombre_contacto, tambo_nombre_seleccionado, pdf_bytes, nombre_pdf_salida)
                         if exito:
                             st.success(f"¡Correo enviado exitosamente a {email_tambo}!")
                         else:
-                            st.error("Hubo un error al enviar el correo. Revisa la configuración de las credenciales SMTP en los secretos de Streamlit.")
+                            st.error("Hubo un error al enviar el correo. Revisa la configuración de las credenciales SMTP.")
     else:
         st.warning("No hay registros para este tambo en el período seleccionado.")
         
 except Exception as e:
-    st.error(f"Error al cargar o procesar el archivo desde Google Drive. Detalle técnico: {e}")
+    st.error(f"Error al cargar o procesar el archivo desde Google Drive o Laboratorio. Detalle técnico: {e}")
