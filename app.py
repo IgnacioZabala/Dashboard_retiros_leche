@@ -33,7 +33,7 @@ def cargar_datos_drive(u_remitos, u_lab):
         
     return df_remitos, df_contactos, df_lab
 
-# --- FUNCIONES DE FORMATO Y LIMPIEZA ---
+# --- FUNCIONES DE FORMATO ---
 def formato_miles(valor):
     return f"{valor:,.0f}".replace(',', '.')
 
@@ -41,23 +41,6 @@ def formato_temp(valor):
     if pd.isna(valor):
         return '-'
     return f"{valor:.1f}".replace('.', ',') + "°"
-
-def limpiar_fecha_lab(texto_fecha):
-    if pd.isna(texto_fecha):
-        return None
-    texto_fecha = str(texto_fecha).strip()
-    # Si son exactamente 8 números juntos (ej: 10082026)
-    if texto_fecha.isdigit() and len(texto_fecha) == 8:
-        try:
-            return pd.to_datetime(texto_fecha, format='%d%m%Y').normalize()
-        except:
-            return None
-    else:
-        # Si tiene barras, guiones o formato estándar (ej: 03/08/2026)
-        try:
-            return pd.to_datetime(texto_fecha, dayfirst=True, errors='coerce').normalize()
-        except:
-            return None
 
 # --- FUNCIÓN PARA GENERAR EL PDF ---
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_comp, hay_datos_previos):
@@ -238,13 +221,13 @@ try:
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce').dt.normalize()
     df = df.dropna(subset=['Fecha']) 
 
-    # --- CRUCE SEGURO CON EL ARCHIVO DE LABORATORIO DE GOOGLE DRIVE ---
+    # --- CRUCE ESTRICTO POR FECHA Y NÚMERO DE TAMBO (IGNORANDO HORA) ---
     if not df_lab_raw.empty:
         try:
             df_lab = df_lab_raw.copy()
             df_lab.columns = df_lab.columns.astype(str).str.strip()
             
-            matching_cols = [c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower()]
+            matching_cols = [c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower() or 'tambo' in c.lower()]
             col_sample = matching_cols[0] if matching_cols else df_lab.columns[0]
             
             lista_tambo = []
@@ -256,16 +239,30 @@ try:
                     lista_fecha.append(None)
                     continue
                 
-                partes = str(val).strip().split()
-                if len(partes) >= 2:
+                texto = str(val).strip()
+                partes = texto.split()
+                
+                tambo_limpio = None
+                fecha_limpia = None
+                
+                if len(partes) >= 1:
                     tambo_limpio = partes[0].replace('T', '').replace('t', '').strip()
-                    fecha_limpia = limpiar_fecha_lab(partes[1])
-                    
-                    lista_tambo.append(tambo_limpio)
-                    lista_fecha.append(fecha_limpia)
-                else:
-                    lista_tambo.append(None)
-                    lista_fecha.append(None)
+                
+                if len(partes) >= 2:
+                    f_str = partes[1].strip()
+                    if f_str.isdigit() and len(f_str) == 8:
+                        try:
+                            fecha_limpia = pd.to_datetime(f_str, format='%d%m%Y', errors='coerce')
+                        except:
+                            fecha_limpia = None
+                    else:
+                        try:
+                            fecha_limpia = pd.to_datetime(f_str, dayfirst=True, errors='coerce')
+                        except:
+                            fecha_limpia = None
+                
+                lista_tambo.append(tambo_limpio)
+                lista_fecha.append(fecha_limpia.normalize() if pd.notna(fecha_limpia) else None)
             
             df_lab['Num_Tambo'] = [str(t).strip() if pd.notna(t) else None for t in lista_tambo]
             df_lab['Fecha'] = lista_fecha
@@ -278,18 +275,26 @@ try:
             if col_prot:
                 df_lab['Proteina_Lab'] = pd.to_numeric(df_lab[col_prot], errors='coerce')
                 
-            cols_merge = ['Num_Tambo', 'Fecha']
-            if col_fat: cols_merge.append('Grasa_Lab')
-            if col_prot: cols_merge.append('Proteina_Lab')
+            cols_agg = {}
+            if col_fat: cols_agg['Grasa_Lab'] = 'mean'
+            if col_prot: cols_agg['Proteina_Lab'] = 'mean'
             
-            df_lab_clean = df_lab[cols_merge].dropna(subset=['Fecha', 'Num_Tambo'])
-            
-            df = pd.merge(df, df_lab_clean, on=['Num_Tambo', 'Fecha'], how='left')
-            
-            if 'Grasa_Lab' in df.columns:
-                df['Grasa'] = df['Grasa_Lab'].combine_first(df['Grasa'])
-            if 'Proteina_Lab' in df.columns:
-                df['Proteina'] = df['Proteina_Lab'].combine_first(df['Proteina'])
+            if cols_agg:
+                # Agrupamos por Tambo y Fecha para unificar promedios por día y evitar duplicados
+                df_lab_clean = df_lab.dropna(subset=['Fecha', 'Num_Tambo']).groupby(['Num_Tambo', 'Fecha'], as_index=False).agg(cols_agg)
+                
+                df['Num_Tambo'] = df['Num_Tambo'].astype(str).str.strip()
+                df['Fecha'] = pd.to_datetime(df['Fecha']).dt.normalize()
+                
+                df_lab_clean['Num_Tambo'] = df_lab_clean['Num_Tambo'].astype(str).str.strip()
+                df_lab_clean['Fecha'] = pd.to_datetime(df_lab_clean['Fecha']).dt.normalize()
+                
+                df = pd.merge(df, df_lab_clean, on=['Num_Tambo', 'Fecha'], how='left')
+                
+                if 'Grasa_Lab' in df.columns:
+                    df['Grasa'] = df['Grasa_Lab'].combine_first(df['Grasa'])
+                if 'Proteina_Lab' in df.columns:
+                    df['Proteina'] = df['Proteina_Lab'].combine_first(df['Proteina'])
                 
         except Exception as err_lab:
             st.sidebar.error(f"Error procesando lab desde Drive: {err_lab}")
