@@ -16,7 +16,17 @@ url_drive = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
 def cargar_datos_drive(url):
     return pd.read_excel(url, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
 
-# --- FUNCIÓN PARA GENERAR EL PDF CON FILTROS DINÁMICOS ---
+# --- FUNCIONES DE FORMATO ---
+def formato_miles(valor):
+    return f"{valor:,.0f}".replace(',', '.')
+
+def formato_temp(valor):
+    if pd.isna(valor):
+        return '-'
+    # Formatea con un decimal y cambia el punto por la coma, seguido de °
+    return f"{valor:.1f}".replace('.', ',') + "°"
+
+# --- FUNCIÓN PARA GENERAR EL PDF ---
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_comp):
     pdf = FPDF()
     pdf.add_page()
@@ -32,7 +42,7 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     # --- TÍTULO CENTRADO ---
     pdf.set_font('Arial', 'B', 12)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, 'Resumen semanal de recoleccion', ln=True, align='C')
+    pdf.cell(0, 6, 'Resumen semanal de recolección', ln=True, align='C')
     
     pdf.set_text_color(0, 0, 0) 
     pdf.ln(4)
@@ -53,27 +63,24 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     pdf.ln(3)
     pdf.set_font('Arial', 'B', 10)
     
-    # Total Litros (con o sin comparativa según el checkbox)
-    texto_litros = f'Total Litros: {total_litros:,.0f} L'
+    texto_litros = f'Total Litros: {formato_miles(total_litros)} L'
     if mostrar_comp:
         texto_litros += f' ({comp_litros})'
     pdf.cell(0, 6, texto_litros, ln=True)
     
-    # Temperatura (si está tildado)
     if mostrar_temp:
-        texto_temp = f'Temperatura Promedio: {temp_prom:.1f} C'
+        texto_temp = f'Temperatura Promedio: {formato_temp(temp_prom)}'
         if mostrar_comp:
             texto_temp += f' ({comp_temp})'
         pdf.cell(0, 6, texto_temp, ln=True)
     
-    # Sólidos (Grasa / Proteína según checkboxes)
     if (mostrar_grasa or mostrar_prot) and (pd.notna(grasa_prom) or pd.notna(proteina_prom)):
         partes_solidos = []
         if mostrar_grasa:
-            g_str = f"{grasa_prom:.2f}%" if pd.notna(grasa_prom) else "S/D"
+            g_str = f"{grasa_prom:.2f}%".replace('.', ',') if pd.notna(grasa_prom) else "S/D"
             partes_solidos.append(f"Grasa: {g_str}")
         if mostrar_prot:
-            p_str = f"{proteina_prom:.2f}%" if pd.notna(proteina_prom) else "S/D"
+            p_str = f"{proteina_prom:.2f}%".replace('.', ',') if pd.notna(proteina_prom) else "S/D"
             partes_solidos.append(f"Proteina: {p_str}")
         
         pdf.cell(0, 6, f"Promedio Solidos -> {' | '.join(partes_solidos)}", ln=True)
@@ -84,39 +91,33 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     pdf.set_font('Arial', 'B', 9)
     pdf.set_fill_color(200, 220, 255)
     pdf.cell(35, 8, 'Fecha', 1, 0, 'C', fill=True)
-    pdf.cell(45, 8, 'N Remito', 1, 0, 'C', fill=True)
-    pdf.cell(35, 8, 'Litros', 1, 0, 'C', fill=True) # Texto cambiado de 'Litros (Ticket)' a 'Litros'
-    
-    # Ajuste dinámico de anchos de columnas de la tabla en el PDF según lo que se elija mostrar
-    ancho_temp = 30 if mostrar_temp else 0
-    ancho_solidos = 45 if (mostrar_grasa or mostrar_prot) else 0
-    # Redistribuir espacio si alguna columna se oculta
-    ancho_remito = 45 + (30 - ancho_temp)/2 + (45 - ancho_solidos)/2 if (not mostrar_temp or not (mostrar_grasa or mostrar_prot)) else 45
+    pdf.cell(45, 8, 'N° de remito', 1, 0, 'C', fill=True)
+    pdf.cell(35, 8, 'Litros', 1, 0, 'C', fill=True)
     
     if mostrar_temp:
-        pdf.cell(30, 8, 'Temp (C)', 1, 0, 'C', fill=True)
+        pdf.cell(30, 8, 'Temp', 1, 0, 'C', fill=True)
     if mostrar_grasa or mostrar_prot:
         pdf.cell(45, 8, 'Solidos (G/P)', 1, 1, 'C', fill=True)
     else:
-        pdf.cell(0, 8, '', 0, 1) # Salto de línea si no hay sólidos
+        pdf.cell(0, 8, '', 0, 1)
     
     pdf.set_font('Arial', '', 9)
     for _, row in df_productor.iterrows():
         fecha_str = row['Fecha'].strftime('%d/%m/%Y')
         remito = str(row['N_Remito']) if pd.notna(row['N_Remito']) else '-'
-        litros = f"{row['Litros_Ticket']:,.0f}" if pd.notna(row['Litros_Ticket']) else '0'
+        litros = formato_miles(row['Litros_Ticket']) if pd.notna(row['Litros_Ticket']) else '0'
         
         pdf.cell(35, 7, fecha_str, 1, 0, 'C')
         pdf.cell(45, 7, remito, 1, 0, 'C')
         pdf.cell(35, 7, litros, 1, 0, 'C')
         
         if mostrar_temp:
-            temp = f"{row['Temperatura']:.1f}" if pd.notna(row['Temperatura']) else '-'
-            pdf.cell(30, 7, temp, 1, 0, 'C')
+            temp_val = formato_temp(row['Temperatura'])
+            pdf.cell(30, 7, temp_val, 1, 0, 'C')
             
         if mostrar_grasa or mostrar_prot:
-            g_val = f"{row['Grasa']}%" if (mostrar_grasa and 'Grasa' in row and pd.notna(row['Grasa'])) else ('-' if mostrar_grasa else '')
-            p_val = f"{row['Proteina']}%" if (mostrar_prot and 'Proteina' in row and pd.notna(row['Proteina'])) else ('-' if mostrar_prot else '')
+            g_val = f"{row['Grasa']}%".replace('.', ',') if (mostrar_grasa and 'Grasa' in row and pd.notna(row['Grasa'])) else ('-' if mostrar_grasa else '')
+            p_val = f"{row['Proteina']}%".replace('.', ',') if (mostrar_prot and 'Proteina' in row and pd.notna(row['Proteina'])) else ('-' if mostrar_prot else '')
             
             if mostrar_grasa and mostrar_prot:
                 solidos_str = f"{g_val} / {p_val}"
@@ -215,13 +216,10 @@ try:
         comp_litros_str = "Sin datos periodo previo"
         comp_temp_str = "Sin datos periodo previo"
         
-        # Métricas en pantalla según selección
         cols_a_mostrar = sum([1, ver_temperatura, ver_grasa, ver_proteina])
-        metric_cols = st.columns(cols_a_мышленes if 'cols_a_мышленes' in locals() else cols_a_mostrar) # corregido abajo dinámicamente
-        
-        col_idx = 0
         c1 = st.columns(cols_a_mostrar)
         
+        col_idx = 0
         if not df_tambo_anterior.empty:
             litros_anterior = df_tambo_anterior['Litros_Ticket'].sum()
             temp_anterior = df_tambo_anterior['Temperatura'].mean()
@@ -229,35 +227,34 @@ try:
             diff_litros_pct = ((litros_actual - litros_anterior) / litros_anterior) * 100 if litros_anterior > 0 else 0
             diff_temp = temp_actual - temp_anterior
             
-            delta_litros_val = f"{diff_litros_pct:+.1f}% vs. Per. Ant." if ver_comparacion else None
-            delta_temp_val = f"{diff_temp:+.1f} °C vs. Per. Ant." if ver_comparacion else None
+            delta_litros_val = f"{diff_litros_pct:+.1f}% vs. Per. Ant.".replace('.', ',') if ver_comparacion else None
+            delta_temp_val = f"{diff_temp:+.1f}° vs. Per. Ant.".replace('.', ',') if ver_comparacion else None
             
-            comp_litros_str = f"{diff_litros_pct:+.1f}% vs. Per. Ant."
-            comp_temp_str = f"{diff_temp:+.1f} °C vs. Per. Ant."
+            comp_litros_str = f"{diff_litros_pct:+.1f}% vs. Per. Ant.".replace('.', ',')
+            comp_temp_str = f"{diff_temp:+.1f}° vs. Per. Ant.".replace('.', ',')
             
-            c1[col_idx].metric("Litros", f"{litros_actual:,.0f} L", delta=delta_litros_val)
+            c1[col_idx].metric("Litros", f"{formato_miles(litros_actual)} L", delta=delta_litros_val)
             col_idx += 1
             if ver_temperatura:
-                c1[col_idx].metric("Temp. Promedio", f"{temp_actual:.1f} °C", delta=delta_temp_val, delta_color="inverse")
+                c1[col_idx].metric("Temp. Promedio", formato_temp(temp_actual), delta=delta_temp_val, delta_color="inverse")
                 col_idx += 1
         else:
-            c1[col_idx].metric("Litros", f"{litros_actual:,.0f} L")
+            c1[col_idx].metric("Litros", f"{formato_miles(litros_actual)} L")
             col_idx += 1
             if ver_temperatura:
-                c1[col_idx].metric("Temp. Promedio", f"{temp_actual:.1f} °C")
+                c1[col_idx].metric("Temp. Promedio", formato_temp(temp_actual))
                 col_idx += 1
                 
         if ver_grasa:
-            c1[col_idx].metric("Grasa Promedio", f"{grasa_actual:.2f}%" if pd.notna(grasa_actual) else "S/D")
+            c1[col_idx].metric("Grasa Promedio", f"{grasa_actual:.2f}%".replace('.', ',') if pd.notna(grasa_actual) else "S/D")
             col_idx += 1
         if ver_proteina:
-            c1[col_idx].metric("Proteína Promedio", f"{prot_actual:.2f}%" if pd.notna(prot_actual) else "S/D")
+            c1[col_idx].metric("Proteína Promedio", f"{prot_actual:.2f}%".replace('.', ',') if pd.notna(prot_actual) else "S/D")
             col_idx += 1
         
         st.markdown("---")
         st.markdown("**Detalle de retiros del período:**")
         
-        # Filtrar columnas a mostrar en la tabla web según checkboxes
         columnas_visibles = ['Fecha', 'N_Remito', 'Litros_Ticket']
         if ver_temperatura:
             columnas_visibles.append('Temperatura')
@@ -267,7 +264,17 @@ try:
             columnas_visibles.append('Proteina')
             
         df_mostrar = df_tambo_semana[columnas_visibles].copy()
-        df_mostrar = df_mostrar.rename(columns={'Litros_Ticket': 'Litros'}) # Cambiado de Litros (Ticket) a Litros en pantalla
+        df_mostrar['Litros_Ticket'] = df_mostrar['Litros_Ticket'].apply(lambda x: formato_miles(x) if pd.notna(x) else '0')
+        
+        if ver_temperatura:
+            df_mostrar['Temperatura'] = df_mostrar['Temperatura'].apply(lambda x: formato_temp(x))
+            
+        df_mostrar = df_mostrar.rename(columns={
+            'Litros_Ticket': 'Litros',
+            'N_Remito': 'N° de remito',
+            'Temperatura': 'Temp'
+        })
+        
         df_mostrar['Fecha'] = df_mostrar['Fecha'].dt.strftime('%d/%m/%Y')
         st.dataframe(df_mostrar, hide_index=True, use_container_width=True)
         
