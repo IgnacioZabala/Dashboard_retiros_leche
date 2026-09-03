@@ -23,11 +23,10 @@ def formato_miles(valor):
 def formato_temp(valor):
     if pd.isna(valor):
         return '-'
-    # Formatea con un decimal y cambia el punto por la coma, seguido de °
     return f"{valor:.1f}".replace('.', ',') + "°"
 
 # --- FUNCIÓN PARA GENERAR EL PDF ---
-def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_comp):
+def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_comp, hay_datos_previos):
     pdf = FPDF()
     pdf.add_page()
     
@@ -42,7 +41,7 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     # --- TÍTULO CENTRADO ---
     pdf.set_font('Arial', 'B', 12)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, 'Resumen semanal de recolección', ln=True, align='C')
+    pdf.cell(0, 6, 'Resumen semanal de recoleccion', ln=True, align='C')
     
     pdf.set_text_color(0, 0, 0) 
     pdf.ln(4)
@@ -63,17 +62,20 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     pdf.ln(3)
     pdf.set_font('Arial', 'B', 10)
     
+    # Total Litros (Incluye comparativa solo si hay datos previos y el checkbox está activo)
     texto_litros = f'Total Litros: {formato_miles(total_litros)} L'
-    if mostrar_comp:
+    if mostrar_comp and hay_datos_previos:
         texto_litros += f' ({comp_litros})'
     pdf.cell(0, 6, texto_litros, ln=True)
     
+    # Temperatura
     if mostrar_temp:
         texto_temp = f'Temperatura Promedio: {formato_temp(temp_prom)}'
-        if mostrar_comp:
+        if mostrar_comp and hay_datos_previos:
             texto_temp += f' ({comp_temp})'
         pdf.cell(0, 6, texto_temp, ln=True)
     
+    # Sólidos
     if (mostrar_grasa or mostrar_prot) and (pd.notna(grasa_prom) or pd.notna(proteina_prom)):
         partes_solidos = []
         if mostrar_grasa:
@@ -167,7 +169,7 @@ try:
     ver_temperatura = st.sidebar.checkbox("Incluir Temperatura", value=True)
     ver_grasa = st.sidebar.checkbox("Incluir Grasa", value=True)
     ver_proteina = st.sidebar.checkbox("Incluir Proteína", value=True)
-    ver_comparacion = st.sidebar.checkbox("Incluir Comparativa vs. Per. Ant.", value=True)
+    ver_comparacion = st.sidebar.checkbox("Incluir Comparativa vs. Semana Ant.", value=True)
 
     st.sidebar.divider()
     st.sidebar.subheader("📦 Envío Masivo")
@@ -183,7 +185,17 @@ try:
                 if not df_t.empty:
                     f_ini = df_t['Fecha_Inicio_Sabado'].iloc[0].strftime('%d/%m/%Y')
                     f_fin = df_t['Fecha_Cierre_Viernes'].iloc[0].strftime('%d/%m/%Y')
-                    pdf_data = generar_pdf_bytes(df_t, t_name, t_id, f_ini, f_fin, "Sin comp.", "Sin comp.", ver_temperatura, ver_grasa, ver_proteina, ver_comparacion)
+                    
+                    # Chequear si tiene datos previos para el lote masivo
+                    f_v_act = df_t['Fecha_Cierre_Viernes'].iloc[0]
+                    f_v_ant = f_v_act - pd.Timedelta(days=7)
+                    df_t_ant = df[(df['Num_Tambo'] == t_id) & (df['Fecha_Cierre_Viernes'] == f_v_ant)]
+                    tiene_prev = not df_t_ant.empty
+                    
+                    comp_l = f"{((df_t['Litros_Ticket'].sum() - df_t_ant['Litros_Ticket'].sum()) / df_t_ant['Litros_Ticket'].sum()) * 100:+.1f}% vs. semana ant.".replace('.', ',') if tiene_prev and df_t_ant['Litros_Ticket'].sum() > 0 else ""
+                    comp_t = f"{df_t['Temperatura'].mean() - df_t_ant['Temperatura'].mean():+.1f}° vs. semana ant.".replace('.', ',') if tiene_prev else ""
+                    
+                    pdf_data = generar_pdf_bytes(df_t, t_name, t_id, f_ini, f_fin, comp_l, comp_t, ver_temperatura, ver_grasa, ver_proteina, ver_comparacion, tiene_prev)
                     zip_file.writestr(f"Resumen_Tambo_{t_id}_{t_name.replace(' ', '_')}_Cierre_{f_fin.replace('/', '-')}.pdf", pdf_data)
             
         zip_buffer.seek(0)
@@ -213,25 +225,26 @@ try:
         grasa_actual = df_tambo_semana['Grasa'].mean() if 'Grasa' in df_tambo_semana.columns else float('nan')
         prot_actual = df_tambo_semana['Proteina'].mean() if 'Proteina' in df_tambo_semana.columns else float('nan')
         
-        comp_litros_str = "Sin datos periodo previo"
-        comp_temp_str = "Sin datos periodo previo"
+        hay_datos_previos = not df_tambo_anterior.empty
+        comp_litros_str = ""
+        comp_temp_str = ""
         
         cols_a_mostrar = sum([1, ver_temperatura, ver_grasa, ver_proteina])
         c1 = st.columns(cols_a_mostrar)
         
         col_idx = 0
-        if not df_tambo_anterior.empty:
+        if hay_datos_previos:
             litros_anterior = df_tambo_anterior['Litros_Ticket'].sum()
             temp_anterior = df_tambo_anterior['Temperatura'].mean()
             
             diff_litros_pct = ((litros_actual - litros_anterior) / litros_anterior) * 100 if litros_anterior > 0 else 0
             diff_temp = temp_actual - temp_anterior
             
-            delta_litros_val = f"{diff_litros_pct:+.1f}% vs. Per. Ant.".replace('.', ',') if ver_comparacion else None
-            delta_temp_val = f"{diff_temp:+.1f}° vs. Per. Ant.".replace('.', ',') if ver_comparacion else None
+            delta_litros_val = f"{diff_litros_pct:+.1f}% vs. semana ant.".replace('.', ',') if ver_comparacion else None
+            delta_temp_val = f"{diff_temp:+.1f}° vs. semana ant.".replace('.', ',') if ver_comparacion else None
             
-            comp_litros_str = f"{diff_litros_pct:+.1f}% vs. Per. Ant.".replace('.', ',')
-            comp_temp_str = f"{diff_temp:+.1f}° vs. Per. Ant.".replace('.', ',')
+            comp_litros_str = f"{diff_litros_pct:+.1f}% vs. semana ant.".replace('.', ',')
+            comp_temp_str = f"{diff_temp:+.1f}° vs. semana ant.".replace('.', ',')
             
             c1[col_idx].metric("Litros", f"{formato_miles(litros_actual)} L", delta=delta_litros_val)
             col_idx += 1
@@ -281,7 +294,7 @@ try:
         pdf_bytes = generar_pdf_bytes(
             df_tambo_semana, tambo_nombre_seleccionado, tambo_seleccionado, 
             f_inicio, f_fin, comp_litros_str, comp_temp_str, 
-            ver_temperatura, ver_grasa, ver_proteina, ver_comparacion
+            ver_temperatura, ver_grasa, ver_proteina, ver_comparacion, hay_datos_previos
         )
         
         st.download_button(
