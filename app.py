@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import re
 from fpdf import FPDF
 import os
 import zipfile
@@ -11,7 +12,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
-st.title("🚜 Panel de Recolección y Liquidación por Tambo")
+st.title("Panel de recolección y liquidación por Tambo")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE ---
 FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" # Archivo principal (Remitos y Contactos)
@@ -27,15 +28,14 @@ def cargar_datos_drive(u_remitos, u_lab):
     
     try:
         xls_lab = pd.ExcelFile(u_lab)
-        sheet_lab = xls_lab.sheet_names[0]
-        df_lab = pd.read_excel(u_lab, sheet_name=sheet_lab)
+        df_lab = pd.read_excel(u_lab, sheet_name=xls_lab.sheet_names[0])
     except Exception as e:
         df_lab = pd.DataFrame()
         st.warning(f"No se pudo cargar el archivo de laboratorio desde Drive. Detalle: {e}")
         
     return df_remitos, df_contactos, df_lab
 
-# --- FUNCIONES DE FORMATO Y LIMPIEZA ---
+# --- FUNCIONES DE LIMPIEZA Y FORMATO ---
 def formato_miles(valor):
     return f"{valor:,.0f}".replace(',', '.')
 
@@ -44,32 +44,35 @@ def formato_temp(valor):
         return '-'
     return f"{valor:.1f}".replace('.', ',') + "°"
 
-def limpiar_tambo(val):
+def limpiar_numero_tambo(val):
     if pd.isna(val):
         return ""
-    s = str(val).strip().upper()
-    s = s.replace('T', '').replace(' ', '')
-    if '.' in s:
+    # Extraer únicamente los dígitos numéricos para asegurar coincidencia exacta (ej: "T21", "21.0", 21 -> "21")
+    numeros = re.findall(r'\d+', str(val))
+    if numeros:
+        return str(int(numeros[0]))
+    return str(val).strip()
+
+def extraer_fecha_lab(texto):
+    if pd.isna(texto):
+        return None
+    s = str(texto).strip()
+    # Buscar formato de 8 dígitos juntos (ej: 23082026)
+    match_8 = re.search(r'\b(\d{2})(\d{2})(\d{4})\b', s)
+    if match_8:
+        d, m, a = match_8.groups()
         try:
-            s = str(int(float(s)))
+            return pd.to_datetime(f"{a}-{m}-{d}", errors='coerce').normalize()
         except:
             pass
-    return s.strip()
-
-def limpiar_fecha_lab(texto_fecha):
-    if pd.isna(texto_fecha):
-        return None
-    texto_fecha = str(texto_fecha).strip()
-    if texto_fecha.isdigit() and len(texto_fecha) == 8:
-        try:
-            return pd.to_datetime(texto_fecha, format='%d%m%Y', errors='coerce').normalize()
-        except:
-            return None
-    else:
-        try:
-            return pd.to_datetime(texto_fecha, dayfirst=True, errors='coerce').normalize()
-        except:
-            return None
+    # Buscar formato con barras o guiones (ej: 23/08/2026)
+    try:
+        f = pd.to_datetime(s, dayfirst=True, errors='coerce')
+        if pd.notna(f):
+            return f.normalize()
+    except:
+        pass
+    return None
 
 # --- FUNCIÓN PARA GENERAR EL PDF ---
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_comp, hay_datos_previos):
@@ -157,8 +160,8 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
             pdf.cell(30, 7, temp_val, 1, 0, 'C')
             
         if mostrar_grasa or mostrar_prot:
-            g_val = f"{row['Grasa']}%".replace('.', ',') if (mostrar_grasa and 'Grasa' in df_productor.columns and pd.notna(row['Grasa'])) else ('-' if mostrar_grasa else '')
-            p_val = f"{row['Proteina']}%".replace('.', ',') if (mostrar_prot and 'Proteina' in df_productor.columns and pd.notna(row['Proteina'])) else ('-' if mostrar_prot else '')
+            g_val = f"{row['Grasa']:.2f}%".replace('.', ',') if (mostrar_grasa and 'Grasa' in df_productor.columns and pd.notna(row['Grasa'])) else ('-' if mostrar_grasa else '')
+            p_val = f"{row['Proteina']:.2f}%".replace('.', ',') if (mostrar_prot and 'Proteina' in df_productor.columns and pd.notna(row['Proteina'])) else ('-' if mostrar_prot else '')
             
             if mostrar_grasa and mostrar_prot:
                 solidos_str = f"{g_val} / {p_val}"
@@ -171,66 +174,11 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
         
     return bytes(pdf.output(dest='S'), encoding='latin-1')
 
-# --- FUNCIÓN PARA ENVIAR CORREO ---
-def enviar_correo_productor(destinatario_email, nombre_contacto, tambo_nombre, pdf_bytes, nombre_archivo):
-    try:
-        remitente = st.secrets["email"]["remitente"]
-        password = st.secrets["email"]["password"]
-        
-        msg = MIMEMultipart()
-        msg['From'] = remitente
-        msg['To'] = destinatario_email
-        msg['Subject'] = f"Resumen Semanal de Recolección - {tambo_nombre}"
-        
-        cuerpo_html = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; color: #333;">
-            <p>Buenas tardes, <b>{nombre_contacto}</b>:</p>
-            <p>Te adjunto el resumen correspondiente a la recolección de leche y calidad de esta semana para el establecimiento <b>{tambo_nombre}</b>.</p>
-            <p>Cualquier consulta quedo a tu disposición.</p>
-            <br>
-            <p>Saludos cordiales,</p>
-            <hr style="border: none; border-top: 1px solid #ccc; width: 300px; text-align: left;">
-            <table style="font-size: 13px; color: #555;">
-                <tr>
-                    <td style="vertical-align: middle; padding-right: 15px;">
-                        <img src="https://i.imgur.com/tu_foto_ejemplo.png" width="70" style="border-radius: 50%;">
-                    </td>
-                    <td style="vertical-align: middle;">
-                        <b>Ignacio Zabala</b><br>
-                        Coopagro Planta Tandil<br>
-                        <i>Gestión y Calidad</i>
-                    </td>
-                </tr>
-            </table>
-            <br>
-            <img src="https://i.imgur.com/tu_banner_coopagro.png" width="400">
-        </body>
-        </html>
-        """
-        msg.attach(MIMEText(cuerpo_html, 'html'))
-        
-        part = MIMEBase('application', 'octet-stream')
-        part.set_payload(pdf_bytes)
-        encoders.encode_base64(part)
-        part.add_header('Content-Disposition', f'attachment; filename="{nombre_archivo}"')
-        msg.attach(part)
-        
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(remitente, password)
-        server.sendmail(remitente, destinatario_email, msg.as_string())
-        server.quit()
-        return True
-    except Exception as e:
-        print(f"Error enviando correo: {e}")
-        return False
-
 # --- CARGA Y PROCESAMIENTO DE DATOS ---
 try:
     df_raw, df_contactos_raw, df_lab_raw = cargar_datos_drive(url_remitos, url_lab)
     
-    # Procesar contactos
+    # Procesamiento de Contactos
     df_contactos = df_contactos_raw.copy()
     df_contactos.columns = df_contactos.columns.astype(str).str.strip()
     cols_c = list(df_contactos.columns)
@@ -239,27 +187,26 @@ try:
     col_contacto = next((c for c in cols_c if 'contacto' in c.lower() or 'nombre' in c.lower()), cols_c[3] if len(cols_c) > 3 else cols_c[min(2, len(cols_c)-1)])
     col_email = next((c for c in cols_c if 'email' in c.lower() or 'correo' in c.lower()), cols_c[4] if len(cols_c) > 4 else cols_c[min(len(cols_c)-1, len(cols_c)-1)])
     
-    df_contactos['Num_Tambo'] = df_contactos[col_codigo].apply(limpiar_tambo)
+    df_contactos['Num_Tambo'] = df_contactos[col_codigo].apply(limpiar_numero_tambo)
     df_contactos['Contacto_Nombre'] = df_contactos[col_contacto]
     df_contactos['Email'] = df_contactos[col_email]
     
     # Procesamiento de Planilla Principal de Remitos
     df = df_raw.copy()
     df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
-    df['Num_Tambo'] = df['Num_Tambo'].apply(limpiar_tambo)
+    df['Num_Tambo'] = df['Num_Tambo'].apply(limpiar_numero_tambo)
     df = df.dropna(subset=['Fecha'])
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce').dt.normalize()
     df = df.dropna(subset=['Fecha']) 
 
-    # --- CRUCE ESTRICTO Y DINÁMICO CON EL ARCHIVO DE LABORATORIO ---
+    # --- CRUCE ESTRICTO DE LABORATORIO (FECHA + NÚMERO DE TAMBO) ---
     if not df_lab_raw.empty:
         try:
             df_lab = df_lab_raw.copy()
             df_lab.columns = df_lab.columns.astype(str).str.strip()
             
-            # Buscar columna de muestra / sample number
-            matching_cols = [c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower() or 'tambo' in c.lower()]
-            col_sample = matching_cols[0] if matching_cols else df_lab.columns[0]
+            # Buscar la columna que contiene la muestra (ej: "Sample number")
+            col_sample = next((c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower() or 'tambo' in c.lower()), df_lab.columns[0])
             
             lista_tambo = []
             lista_fecha = []
@@ -271,18 +218,30 @@ try:
                     continue
                 
                 texto = str(val).strip()
+                # El texto suele ser tipo "T21 23082026 09:50" o "t21 t13..."
                 partes = texto.split()
                 
-                tambo_limpio = limpiar_tambo(partes[0]) if len(partes) >= 1 else None
-                fecha_limpia = limpiar_fecha_lab(partes[1]) if len(partes) >= 2 else None
+                t_limpio = limpiar_numero_tambo(partes[0]) if len(partes) >= 0 else None
                 
-                lista_tambo.append(tambo_limpio)
-                lista_fecha.append(fecha_limpia)
+                # Intentamos extraer fecha de cualquier parte de la cadena
+                f_limpia = None
+                for p in partes:
+                    f_int = extraer_fecha_lab(p)
+                    if f_int is not None:
+                        f_limpia = f_int
+                        break
+                
+                # Si no se encontró en las partes individuales, buscamos en todo el texto completo
+                if f_limpia is None:
+                    f_limpia = extraer_fecha_lab(texto)
+                
+                lista_tambo.append(t_limpio)
+                lista_fecha.append(f_limpia)
             
             df_lab['Num_Tambo'] = lista_tambo
             df_lab['Fecha'] = lista_fecha
             
-            # Detección flexible de columnas de Grasa y Proteína
+            # Ubicar columnas de Grasa (Fat) y Proteína (Protein)
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
             col_prot = next((c for c in df_lab.columns if 'protein' in c.lower() or 'proteina' in c.lower()), None)
             
@@ -296,9 +255,10 @@ try:
             if col_prot: cols_agg['Proteina_Lab'] = 'mean'
             
             if cols_agg:
+                # Agrupar por Tambo y Fecha limpia para promediar si hay múltiples mediciones
                 df_lab_clean = df_lab.dropna(subset=['Fecha', 'Num_Tambo']).groupby(['Num_Tambo', 'Fecha'], as_index=False).agg(cols_agg)
                 
-                # Merge seguro
+                # Realizar el merge estricto
                 df = pd.merge(df, df_lab_clean, on=['Num_Tambo', 'Fecha'], how='left')
                 
                 if 'Grasa_Lab' in df.columns:
@@ -307,7 +267,7 @@ try:
                     df['Proteina'] = df['Proteina_Lab'].combine_first(df['Proteina'])
                 
         except Exception as err_lab:
-            st.sidebar.error(f"Error procesando lab desde Drive: {err_lab}")
+            st.sidebar.error(f"Error procesando lab: {err_lab}")
     
     df['Fecha_Cierre_Viernes'] = df['Fecha'] + pd.to_timedelta((4 - df['Fecha'].dt.weekday) % 7, unit='D')
     df['Fecha_Inicio_Sabado'] = df['Fecha_Cierre_Viernes'] - pd.Timedelta(days=6)
