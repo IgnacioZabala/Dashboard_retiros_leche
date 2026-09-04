@@ -240,7 +240,8 @@ try:
                 lista_fecha.append(f_limpia)
             
             df_lab['Num_Tambo'] = lista_tambo
-            df_lab['Fecha'] = pd.to_datetime(lista_fecha, errors='coerce').dt.normalize()
+            # CORRECCIÓN: Convertir explícitamente a Series de Pandas antes de normalizar
+            df_lab['Fecha'] = pd.to_datetime(pd.Series(lista_fecha), errors='coerce').dt.normalize()
             
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
             col_prot = next((c for c in df_lab.columns if 'protein' in c.lower() or 'proteina' in c.lower()), None)
