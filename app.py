@@ -26,21 +26,23 @@ def cargar_datos_drive(u_remitos, u_lab):
     df_remitos = pd.read_excel(u_remitos, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
     df_contactos = pd.read_excel(u_remitos, sheet_name='Código Tambos')
     
+    df_lab = pd.DataFrame()
     try:
         xls_lab = pd.ExcelFile(u_lab)
         df_lab_temp = pd.read_excel(u_lab, sheet_name=xls_lab.sheet_names[0], header=None)
         
         header_row = 0
         for idx, row in df_lab_temp.iterrows():
-            row_str = " ".join([str(x).lower() for x in row.dropna()])
+            row_str = " ".join([str(x).lower() for x in row.dropna() if pd.notna(x)])
             if 'sample' in row_str or 'fat' in row_str or 'protein' in row_str or 'grasa' in row_str:
                 header_row = idx
                 break
                 
         df_lab = pd.read_excel(u_lab, sheet_name=xls_lab.sheet_names[0], header=header_row)
+        # Blindaje: Forzar nombres de columnas a texto plano
+        df_lab.columns = [str(c).strip() for c in df_lab.columns]
     except Exception as e:
-        df_lab = pd.DataFrame()
-        st.warning(f"No se pudo cargar el archivo de laboratorio. Detalle: {e}")
+        st.sidebar.warning(f"Advertencia al leer laboratorio: {e}")
         
     return df_remitos, df_contactos, df_lab
 
@@ -198,7 +200,7 @@ try:
     df_raw, df_contactos_raw, df_lab_raw = cargar_datos_drive(url_remitos, url_lab)
     
     df_contactos = df_contactos_raw.copy()
-    df_contactos.columns = df_contactos.columns.astype(str).str.strip()
+    df_contactos.columns = [str(c).strip() for c in df_contactos.columns]
     cols_c = list(df_contactos.columns)
     
     col_codigo = next((c for c in cols_c if 'código' in c.lower() or 'codigo' in c.lower() and 'viejo' not in c.lower()), cols_c[1] if len(cols_c) > 1 else cols_c[0])
@@ -223,7 +225,7 @@ try:
     if not df_lab_raw.empty:
         try:
             df_lab = df_lab_raw.copy()
-            df_lab.columns = df_lab.columns.astype(str).str.strip()
+            df_lab.columns = [str(c).strip() for c in df_lab.columns]
             
             col_sample = next((c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower() or 'tambo' in c.lower()), df_lab.columns[0])
             
@@ -240,7 +242,6 @@ try:
                 lista_fecha.append(f_limpia)
             
             df_lab['Num_Tambo'] = lista_tambo
-            # CORRECCIÓN: Convertir explícitamente a Series de Pandas antes de normalizar
             df_lab['Fecha'] = pd.to_datetime(pd.Series(lista_fecha), errors='coerce').dt.normalize()
             
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
@@ -256,16 +257,8 @@ try:
             if cols_agg:
                 df_lab_clean = df_lab.dropna(subset=['Fecha', 'Num_Tambo']).groupby(['Num_Tambo', 'Fecha'], as_index=False).agg(cols_agg)
                 
-                # CLAVES DE CRUCE LAB (TEXTO PLANO)
                 df_lab_clean['merge_tambo'] = df_lab_clean['Num_Tambo'].astype(str).str.strip().str.upper()
                 df_lab_clean['merge_fecha'] = df_lab_clean['Fecha'].dt.strftime('%Y-%m-%d')
-                
-                # DIAGNÓSTICO EN PANTALLA
-                with st.expander("🛠️ Ver Diagnóstico de Cruce (Desplegar si falla)"):
-                    st.write("**Datos de Remitos (Tambo y Fecha que busca):**")
-                    st.dataframe(df[['merge_tambo', 'merge_fecha']].head())
-                    st.write("**Datos del Laboratorio (Tambo y Fecha que encontró):**")
-                    st.dataframe(df_lab_clean[['merge_tambo', 'merge_fecha', 'Grasa_Lab']].head())
                 
                 df = pd.merge(df, df_lab_clean, on=['merge_tambo', 'merge_fecha'], how='left')
                 
@@ -273,7 +266,7 @@ try:
                 if 'Proteina_Lab' in df.columns: df['Proteina'] = df['Proteina_Lab'].combine_first(df['Proteina'])
                 
         except Exception as err_lab:
-            st.sidebar.error(f"Error procesando lab: {err_lab}")
+            st.sidebar.error(f"Error procesando lab interno: {err_lab}")
     
     df['Fecha_Cierre_Viernes'] = df['Fecha'] + pd.to_timedelta((4 - df['Fecha'].dt.weekday) % 7, unit='D')
     df['Fecha_Inicio_Sabado'] = df['Fecha_Cierre_Viernes'] - pd.Timedelta(days=6)
