@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
+import traceback
 from fpdf import FPDF
 import os
 import zipfile
@@ -23,26 +24,34 @@ url_lab = f"https://drive.google.com/uc?export=download&id={FILE_ID_LAB}"
 
 @st.cache_data(ttl=60)
 def cargar_datos_drive(u_remitos, u_lab):
-    # Leemos la planilla principal asegurando las filas correctas
-    df_remitos_raw = pd.read_excel(u_remitos, sheet_name='Résumen OD-PRO-03', skiprows=3)
-    df_contactos = pd.read_excel(u_remitos, sheet_name='Código Tambos')
-    
+    df_remitos_raw = pd.DataFrame()
+    df_contactos = pd.DataFrame()
     df_lab = pd.DataFrame()
+    
+    try:
+        # Intentamos leer la solapa de remitos probando distintas filas de cabecera si es necesario
+        df_remitos_raw = pd.read_excel(u_remitos, sheet_name='Résumen OD-PRO-03', skiprows=3)
+    except Exception as e:
+        st.error(f"Error al conectar con la planilla de Remitos en Drive: {e}")
+        
+    try:
+        df_contactos = pd.read_excel(u_remitos, sheet_name='Código Tambos')
+    except Exception as e:
+        st.warning(f"No se pudo leer la solapa 'Código Tambos': {e}")
+        
     try:
         xls_lab = pd.ExcelFile(u_lab)
         df_lab_temp = pd.read_excel(u_lab, sheet_name=xls_lab.sheet_names[0], header=None)
-        
         header_row = 0
         for idx, row in df_lab_temp.iterrows():
             row_str = " ".join([str(x).lower() for x in row.dropna() if pd.notna(x)])
             if 'sample' in row_str or 'fat' in row_str or 'protein' in row_str or 'grasa' in row_str:
                 header_row = idx
                 break
-                
         df_lab = pd.read_excel(u_lab, sheet_name=xls_lab.sheet_names[0], header=header_row)
         df_lab.columns = [str(c).strip() for c in df_lab.columns]
     except Exception as e:
-        st.sidebar.warning(f"Advertencia al leer laboratorio: {e}")
+        st.warning(f"Advertencia al leer laboratorio: {e}")
         
     return df_remitos_raw, df_contactos, df_lab
 
@@ -195,10 +204,14 @@ def enviar_correo_productor(destinatario_email, nombre_contacto, tambo_nombre, p
     except Exception as e:
         return False
 
-# --- CARGA Y PROCESAMIENTO DE DATOS ---
+# --- CARGA Y PROCESAMIENTO DE DATOS CON BLINDAJE TOTAL ---
 try:
     df_raw, df_contactos_raw, df_lab_raw = cargar_datos_drive(url_remitos, url_lab)
     
+    if df_raw.empty:
+        st.error("El archivo de remitos se cargó vacío o no se pudo acceder a través de Google Drive.")
+        st.stop()
+
     df_contactos = df_contactos_raw.copy()
     df_contactos.columns = [str(c).strip() for c in df_contactos.columns]
     cols_c = list(df_contactos.columns)
@@ -211,14 +224,18 @@ try:
     df_contactos['Contacto_Nombre'] = df_contactos[col_contacto]
     df_contactos['Email'] = df_contactos[col_email]
     
-    # Procesamiento flexible por posición de columnas (Columnas B a K del excel)
-    df = df_raw.iloc[:, :10].copy()
+    # Asignación segura por posición de columnas (Columnas B a K del excel de remitos)
+    if df_raw.shape[1] >= 10:
+        df = df_raw.iloc[:, :10].copy()
+    else:
+        df = df_raw.copy()
+        
     df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
     
     df['Num_Tambo'] = df['Num_Tambo'].apply(limpiar_tambo)
     df = df.dropna(subset=['Fecha'])
     
-    # Conversión segura de fechas sin errores de 'dt'
+    # Conversión estricta y segura de fechas
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
     df = df.dropna(subset=['Fecha'])
     df['Fecha'] = df['Fecha'].dt.normalize()
@@ -247,8 +264,6 @@ try:
                 lista_fecha.append(f_limpia)
             
             df_lab['Num_Tambo'] = lista_tambo
-            
-            # Conversión segura de fechas de laboratorio
             s_fechas_lab = pd.to_datetime(pd.Series(lista_fecha), errors='coerce')
             df_lab['Fecha'] = s_fechas_lab.dt.normalize()
             
@@ -282,10 +297,18 @@ try:
     
     st.sidebar.header("Filtros de Reporte")
     ciclos_disponibles = df[['Fecha_Cierre_Viernes', 'Ciclo_Semana']].drop_duplicates().sort_values('Fecha_Cierre_Viernes', ascending=False)['Ciclo_Semana'].tolist()
+    if not ciclos_disponibles:
+        st.warning("No hay ciclos de semana disponibles en los datos cargados.")
+        st.stop()
+        
     ciclo_seleccionado = st.sidebar.selectbox("1. Selecciona el Cierre de Semana:", ciclos_disponibles)
     df_semana_actual = df[df['Ciclo_Semana'] == ciclo_seleccionado]
     
     mapeo_tambos = df_semana_actual[['Tambo', 'Num_Tambo']].dropna().drop_duplicates().sort_values(by='Tambo', ascending=True)
+    if mapeo_tambos.empty:
+        st.warning("No hay tambos en esta semana.")
+        st.stop()
+        
     tambo_nombre_seleccionado = st.sidebar.selectbox("2. Selecciona el Tambo:", mapeo_tambos['Tambo'].tolist())
     tambo_seleccionado = mapeo_tambos[mapeo_tambos['Tambo'] == tambo_nombre_seleccionado]['Num_Tambo'].values[0]
 
@@ -355,6 +378,10 @@ try:
         df_show['Fecha'] = df_show['Fecha'].dt.strftime('%d/%m/%Y')
         st.dataframe(df_show.rename(columns={'Litros_Ticket': 'Litros', 'N_Remito': 'N° de remito', 'Temperatura': 'Temp'}), hide_index=True, use_container_width=True)
     else:
-        st.warning("No hay registros.")
+        st.warning("No hay registros para este tambo.")
+        
 except Exception as e:
+    # Mostramos el error técnico exacto con trazabilidad para saber dónde ocurrió
     st.error(f"Error procesando los archivos: {e}")
+    with st.expander("Ver detalles técnicos del error"):
+        st.code(traceback.format_exc())
