@@ -15,28 +15,31 @@ from email import encoders
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
 st.title("Panel de recolección y liquidación por Tambo")
 
-# --- CONFIGURACIÓN DE GOOGLE DRIVE ---
+# --- CONFIGURACIÓN DE GOOGLE DRIVE PARA LOS 3 ARCHIVOS ---
 FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
 FILE_ID_LAB = "1NNYjM5Aqg9iDdJ85UoALRim8P2A1kaUD"      
+FILE_ID_BACSOMATIC = "1KeTle24zxjK-clKAuXsAOUzGkfBNXgI8"      
 
 url_remitos = f"https://drive.google.com/uc?export=download&id={FILE_ID_REMITOS}"
 url_lab = f"https://drive.google.com/uc?export=download&id={FILE_ID_LAB}"
+url_bacsomatic = f"https://drive.google.com/uc?export=download&id={FILE_ID_BACSOMATIC}"
 
 @st.cache_data(ttl=60)
-def cargar_datos_drive(u_remitos, u_lab):
+def cargar_datos_drive(u_remitos, u_lab, u_bacsomatic):
     df_remitos_raw = pd.DataFrame()
     df_contactos = pd.DataFrame()
     df_lab = pd.DataFrame()
+    df_bacsomatic = pd.DataFrame()
     
     try:
         df_remitos_raw = pd.read_excel(u_remitos, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
     except Exception as e:
-        st.error(f"Error al leer la solapa de Remitos en Drive: {e}")
+        pass
         
     try:
         df_contactos = pd.read_excel(u_remitos, sheet_name='Código Tambos')
     except Exception as e:
-        st.warning(f"No se pudo leer la solapa 'Código Tambos': {e}")
+        pass
         
     try:
         xls_lab = pd.ExcelFile(u_lab)
@@ -44,15 +47,29 @@ def cargar_datos_drive(u_remitos, u_lab):
         header_row = 0
         for idx, row in df_lab_temp.iterrows():
             row_str = " ".join([str(x).lower() for x in row.dropna() if pd.notna(x)])
-            if 'sample' in row_str or 'fat' in row_str or 'protein' in row_str or 'grasa' in row_str or 'fp' in row_str or 'fecha' in row_str or 'date' in row_str:
+            if 'sample' in row_str or 'fat' in row_str or 'protein' in row_str or 'grasa' in row_str:
                 header_row = idx
                 break
         df_lab = pd.read_excel(u_lab, sheet_name=xls_lab.sheet_names[0], header=header_row)
         df_lab.columns = [str(c).strip() for c in df_lab.columns]
     except Exception as e:
-        st.warning(f"Advertencia al leer laboratorio: {e}")
+        st.sidebar.warning(f"No se pudo cargar el archivo Milko: {e}")
         
-    return df_remitos_raw, df_contactos, df_lab
+    try:
+        xls_bac = pd.ExcelFile(u_bacsomatic)
+        df_bac_temp = pd.read_excel(u_bacsomatic, sheet_name=xls_bac.sheet_names[0], header=None)
+        header_row_bac = 0
+        for idx, row in df_bac_temp.iterrows():
+            row_str = " ".join([str(x).lower() for x in row.dropna() if pd.notna(x)])
+            if 'id usuario' in row_str or 'ufc' in row_str or 'scc' in row_str:
+                header_row_bac = idx
+                break
+        df_bacsomatic = pd.read_excel(u_bacsomatic, sheet_name=xls_bac.sheet_names[0], header=header_row_bac)
+        df_bacsomatic.columns = [str(c).strip() for c in df_bacsomatic.columns]
+    except Exception as e:
+        st.sidebar.warning(f"No se pudo cargar el archivo Bacsomatic: {e}")
+        
+    return df_remitos_raw, df_contactos, df_lab, df_bacsomatic
 
 def formato_miles(valor):
     return f"{valor:,.0f}".replace(',', '.')
@@ -71,6 +88,16 @@ def limpiar_tambo(val):
 def extraer_fecha_texto(texto):
     if pd.isna(texto): return None
     s = str(texto).strip()
+    
+    # Formato compacto DDMMYYYY (ej: 09022025)
+    match_compacto = re.search(r'(\d{2})(\d{2})(\d{4})', s)
+    if match_compacto:
+        d, m, a = match_compacto.groups()
+        try:
+            return pd.to_datetime(f"{a}-{m}-{d}").normalize()
+        except:
+            pass
+            
     match = re.search(r'(\d{2})[-/]?(\d{2})[-/]?(\d{4})', s)
     if match:
         d, m, a = match.groups()
@@ -80,7 +107,7 @@ def extraer_fecha_texto(texto):
             pass
     return None
 
-def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_crios, mostrar_comp, hay_datos_previos):
+def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_crios, mostrar_ufc, mostrar_scc, mostrar_comp, hay_datos_previos):
     pdf = FPDF()
     pdf.add_page()
     
@@ -108,6 +135,8 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     grasa_prom = df_productor['Grasa'].mean() if 'Grasa' in df_productor.columns else float('nan')
     proteina_prom = df_productor['Proteina'].mean() if 'Proteina' in df_productor.columns else float('nan')
     crios_prom = df_productor['Crioscopia'].mean() if 'Crioscopia' in df_productor.columns else float('nan')
+    ufc_prom = df_productor['UFC'].mean() if 'UFC' in df_productor.columns else float('nan')
+    scc_prom = df_productor['SCC'].mean() if 'SCC' in df_productor.columns else float('nan')
     
     pdf.ln(3)
     pdf.set_font('Arial', 'B', 10)
@@ -124,29 +153,27 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
         pdf.cell(0, 6, texto_temp, ln=True)
     
     partes_solidos = []
-    if mostrar_grasa and pd.notna(grasa_prom):
-        partes_solidos.append(f"Grasa: {grasa_prom:.2f}%".replace('.', ','))
-    if mostrar_prot and pd.notna(proteina_prom):
-        partes_solidos.append(f"Proteina: {proteina_prom:.2f}%".replace('.', ','))
-    if mostrar_crios and pd.notna(crios_prom):
-        partes_solidos.append(f"Crioscopia: {crios_prom:.3f}".replace('.', ','))
+    if mostrar_grasa and pd.notna(grasa_prom): partes_solidos.append(f"Grasa: {grasa_prom:.2f}%".replace('.', ','))
+    if mostrar_prot and pd.notna(proteina_prom): partes_solidos.append(f"Proteina: {proteina_prom:.2f}%".replace('.', ','))
+    if mostrar_crios and pd.notna(crios_prom): partes_solidos.append(f"Crioscopia: {crios_prom:.3f}".replace('.', ','))
+    if mostrar_ufc and pd.notna(ufc_prom): partes_solidos.append(f"UFC: {formato_miles(ufc_prom)}")
+    if mostrar_scc and pd.notna(scc_prom): partes_solidos.append(f"SCC: {formato_miles(scc_prom)}")
         
     if partes_solidos:
-        pdf.cell(0, 6, f"Promedios Laboratorio -> {' | '.join(partes_solidos)}", ln=True)
+        pdf.cell(0, 6, f"Promedios Lab -> {' | '.join(partes_solidos)}", ln=True)
     
     pdf.ln(6)
     pdf.set_font('Arial', 'B', 9)
     pdf.set_fill_color(200, 220, 255)
     
-    # Cabeceras de tabla ajustadas en ancho según columnas visibles
-    cols_header = [('Fecha', 28), ('N° de remito', 40), ('Litros', 28)]
-    if mostrar_temp: cols_header.append(('Temp', 20))
-    if mostrar_grasa: cols_header.append(('Grasa', 22))
-    if mostrar_prot: cols_header.append(('Proteína', 22))
-    if mostrar_crios: cols_header.append(('Crioscop.', 20))
+    cols_header = [('Fecha', 26), ('N° de remito', 38), ('Litros', 26)]
+    if mostrar_temp: cols_header.append(('Temp', 18))
+    if mostrar_grasa: cols_header.append(('Grasa', 20))
+    if mostrar_prot: cols_header.append(('Proteína', 20))
+    if mostrar_crios: cols_header.append(('Crios.', 18))
+    if mostrar_ufc: cols_header.append(('UFC', 18))
+    if mostrar_scc: cols_header.append(('SCC', 18))
         
-    total_w = sum([w for _, w in cols_header])
-    # Ajuste proporcional si se pasa del ancho útil (~180mm)
     for i, (col_name, col_w) in enumerate(cols_header):
         is_last = (i == len(cols_header) - 1)
         pdf.cell(col_w, 8, col_name, 1, 1 if is_last else 0, 'C', fill=True)
@@ -157,23 +184,14 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
         remito = str(row['N_Remito']) if pd.notna(row['N_Remito']) else '-'
         litros = formato_miles(row['Litros_Ticket']) if pd.notna(row['Litros_Ticket']) else '0'
         
-        row_cells = [(fecha_str, 28), (remito, 40), (litros, 28)]
+        row_cells = [(fecha_str, 26), (remito, 38), (litros, 26)]
         
-        if mostrar_temp:
-            temp_val = formato_temp(row['Temperatura'])
-            row_cells.append((temp_val, 20))
-            
-        if mostrar_grasa:
-            g_val = f"{row['Grasa']:.2f}%".replace('.', ',') if ('Grasa' in df_productor.columns and pd.notna(row['Grasa'])) else '-'
-            row_cells.append((g_val, 22))
-            
-        if mostrar_prot:
-            p_val = f"{row['Proteina']:.2f}%".replace('.', ',') if ('Proteina' in df_productor.columns and pd.notna(row['Proteina'])) else '-'
-            row_cells.append((p_val, 22))
-            
-        if mostrar_crios:
-            c_val = f"{row['Crioscopia']:.3f}".replace('.', ',') if ('Crioscopia' in df_productor.columns and pd.notna(row['Crioscopia'])) else '-'
-            row_cells.append((c_val, 20))
+        if mostrar_temp: row_cells.append((formato_temp(row['Temperatura']), 18))
+        if mostrar_grasa: row_cells.append((f"{row['Grasa']:.2f}%".replace('.', ',') if ('Grasa' in df_productor.columns and pd.notna(row['Grasa'])) else '-', 20))
+        if mostrar_prot: row_cells.append((f"{row['Proteina']:.2f}%".replace('.', ',') if ('Proteina' in df_productor.columns and pd.notna(row['Proteina'])) else '-', 20))
+        if mostrar_crios: row_cells.append((f"{row['Crioscopia']:.3f}".replace('.', ',') if ('Crioscopia' in df_productor.columns and pd.notna(row['Crioscopia'])) else '-', 18))
+        if mostrar_ufc: row_cells.append((formato_miles(row['UFC']) if ('UFC' in df_productor.columns and pd.notna(row['UFC'])) else '-', 18))
+        if mostrar_scc: row_cells.append((formato_miles(row['SCC']) if ('SCC' in df_productor.columns and pd.notna(row['SCC'])) else '-', 18))
             
         for i, (val, col_w) in enumerate(row_cells):
             is_last = (i == len(row_cells) - 1)
@@ -210,7 +228,7 @@ def enviar_correo_productor(destinatario_email, nombre_contacto, tambo_nombre, p
 
 # --- CARGA Y PROCESAMIENTO DE DATOS ---
 try:
-    df_raw, df_contactos_raw, df_lab_raw = cargar_datos_drive(url_remitos, url_lab)
+    df_raw, df_contactos_raw, df_lab_raw, df_bac_raw = cargar_datos_drive(url_remitos, url_lab, url_bacsomatic)
     
     if df_raw.empty:
         st.error("El archivo de remitos se cargó vacío o no se pudo acceder a través de Google Drive.")
@@ -241,11 +259,11 @@ try:
     df['merge_tambo'] = df['Num_Tambo'].astype(str).str.strip().str.upper()
     df['merge_fecha'] = df['Fecha'].dt.strftime('%Y-%m-%d')
 
+    # 1. PROCESAR MILFOSCAN (Grasa, Proteína, Crioscopía)
     if not df_lab_raw.empty:
         try:
             df_lab = df_lab_raw.copy()
             df_lab.columns = [str(c).strip() for c in df_lab.columns]
-            
             col_sample = next((c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower() or 'tambo' in c.lower() or 'muestra' in c.lower()), df_lab.columns[0])
             col_date_lab = next((c for c in df_lab.columns if 'fecha' in c.lower() or 'date' in c.lower() or 'time' in c.lower()), None)
             
@@ -253,35 +271,23 @@ try:
             for _, r_lab in df_lab.iterrows():
                 val_sample = r_lab[col_sample]
                 if pd.isna(val_sample):
-                    lista_tambo.append(None)
-                    lista_fecha.append(None)
-                    continue
-                
+                    lista_tambo.append(None); lista_fecha.append(None); continue
                 texto = str(val_sample).strip()
                 partes = texto.split()
                 t_limpio = limpiar_tambo(partes[0]) if len(partes) > 0 else None
-                
                 f_limpia = None
                 if col_date_lab and pd.notna(r_lab[col_date_lab]):
                     f_limpia = pd.to_datetime(r_lab[col_date_lab], errors='coerce')
-                    if pd.notna(f_limpia):
-                        f_limpia = f_limpia.normalize()
-                
+                    if pd.notna(f_limpia): f_limpia = f_limpia.normalize()
                 if f_limpia is None:
                     for p in partes:
                         f_int = extraer_fecha_texto(p)
-                        if f_int is not None:
-                            f_limpia = f_int
-                            break
-                    if f_limpia is None:
-                        f_limpia = extraer_fecha_texto(texto)
-                
-                lista_tambo.append(t_limpio)
-                lista_fecha.append(f_limpia)
+                        if f_int is not None: f_limpia = f_int; break
+                    if f_limpia is None: f_limpia = extraer_fecha_texto(texto)
+                lista_tambo.append(t_limpio); lista_fecha.append(f_limpia)
             
             df_lab['Num_Tambo'] = lista_tambo
-            s_fechas_lab = pd.to_datetime(pd.Series(lista_fecha), errors='coerce')
-            df_lab['Fecha'] = s_fechas_lab.dt.normalize()
+            df_lab['Fecha'] = pd.to_datetime(pd.Series(lista_fecha), errors='coerce').dt.normalize()
             
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
             col_prot = next((c for c in df_lab.columns if 'protein' in c.lower() or 'proteina' in c.lower()), None)
@@ -291,27 +297,77 @@ try:
             if col_prot: df_lab['Proteina_Lab'] = pd.to_numeric(df_lab[col_prot].astype(str).str.replace(',', '.'), errors='coerce')
             if col_fp: df_lab['Crioscopia_Lab'] = pd.to_numeric(df_lab[col_fp].astype(str).str.replace(',', '.'), errors='coerce')
                 
-            cols_agg = {}
-            if col_fat: cols_agg['Grasa_Lab'] = 'mean'
-            if col_prot: cols_agg['Proteina_Lab'] = 'mean'
-            if col_fp: cols_agg['Crioscopia_Lab'] = 'mean'
+            cols_agg_milko = {}
+            if col_fat: cols_agg_milko['Grasa_Lab'] = 'mean'
+            if col_prot: cols_agg_milko['Proteina_Lab'] = 'mean'
+            if col_fp: cols_agg_milko['Crioscopia_Lab'] = 'mean'
             
-            if cols_agg:
-                df_lab_clean = df_lab.dropna(subset=['Fecha', 'Num_Tambo']).groupby(['Num_Tambo', 'Fecha'], as_index=False).agg(cols_agg)
+            if cols_agg_milko:
+                df_milko_clean = df_lab.dropna(subset=['Fecha', 'Num_Tambo']).groupby(['Num_Tambo', 'Fecha'], as_index=False).agg(cols_agg_milko)
+                df_milko_clean['merge_tambo'] = df_milko_clean['Num_Tambo'].astype(str).str.strip().str.upper()
+                df_milko_clean['merge_fecha'] = df_milko_clean['Fecha'].dt.strftime('%Y-%m-%d')
+                df_milko_clean = df_milko_clean[['merge_tambo', 'merge_fecha'] + list(cols_agg_milko.keys())]
                 
-                df_lab_clean['merge_tambo'] = df_lab_clean['Num_Tambo'].astype(str).str.strip().str.upper()
-                df_lab_clean['merge_fecha'] = df_lab_clean['Fecha'].dt.strftime('%Y-%m-%d')
-                
-                df_lab_clean = df_lab_clean[['merge_tambo', 'merge_fecha'] + [c for c in cols_agg.keys()]]
-                
-                df = pd.merge(df, df_lab_clean, on=['merge_tambo', 'merge_fecha'], how='left')
-                
+                df = pd.merge(df, df_milko_clean, on=['merge_tambo', 'merge_fecha'], how='left')
                 if 'Grasa_Lab' in df.columns: df['Grasa'] = df['Grasa_Lab'].combine_first(df.get('Grasa', pd.Series(dtype=float)))
                 if 'Proteina_Lab' in df.columns: df['Proteina'] = df['Proteina_Lab'].combine_first(df.get('Proteina', pd.Series(dtype=float)))
                 if 'Crioscopia_Lab' in df.columns: df['Crioscopia'] = df['Crioscopia_Lab'].combine_first(df.get('Crioscopia', pd.Series(dtype=float)))
+        except Exception as e:
+            st.sidebar.error(f"Error procesando Milko: {e}")
+
+    # 2. PROCESAR BACSOMATIC (UFC y SCC)
+    if not df_bac_raw.empty:
+        try:
+            df_bac = df_bac_raw.copy()
+            df_bac.columns = [str(c).strip() for c in df_bac.columns]
+            
+            # Buscar columna "ID usuario definido"
+            col_id_user = next((c for c in df_bac.columns if 'id usuario' in c.lower() or 'sample' in c.lower() or 'tambo' in c.lower() or 'muestra' in c.lower()), df_bac.columns[0])
+            
+            lista_tambo_bac, lista_fecha_bac = [], []
+            for _, r_bac in df_bac.iterrows():
+                val_id = r_bac[col_id_user]
+                if pd.isna(val_id):
+                    lista_tambo_bac.append(None); lista_fecha_bac.append(None); continue
                 
-        except Exception as err_lab:
-            st.sidebar.error(f"Error procesando lab interno: {err_lab}")
+                texto = str(val_id).strip()
+                partes = texto.split()
+                t_limpio = limpiar_tambo(partes[0]) if len(partes) > 0 else None
+                
+                # Extraer fecha compacta DDMMYYYY (ej: 09022025)
+                f_limpia = extraer_fecha_texto(texto)
+                if f_limpia is None:
+                    for p in partes:
+                        f_int = extraer_fecha_texto(p)
+                        if f_int is not None: f_limpia = f_int; break
+                
+                lista_tambo_bac.append(t_limpio)
+                lista_fecha_bac.append(f_limpia)
+            
+            df_bac['Num_Tambo'] = lista_tambo_bac
+            df_bac['Fecha'] = pd.to_datetime(pd.Series(lista_fecha_bac), errors='coerce').dt.normalize()
+            
+            col_ufc = next((c for c in df_bac.columns if 'ufc' in c.lower()), None)
+            col_scc = next((c for c in df_bac.columns if 'scc' in c.lower() or 'celulas' in c.lower() or 'somáticas' in c.lower()), None)
+            
+            if col_ufc: df_bac['UFC_Val'] = pd.to_numeric(df_bac[col_ufc].astype(str).str.replace(',', '.'), errors='coerce')
+            if col_scc: df_bac['SCC_Val'] = pd.to_numeric(df_bac[col_scc].astype(str).str.replace(',', '.'), errors='coerce')
+            
+            cols_agg_bac = {}
+            if col_ufc: cols_agg_bac['UFC_Val'] = 'mean'
+            if col_scc: cols_agg_bac['SCC_Val'] = 'mean'
+            
+            if cols_agg_bac:
+                df_bac_clean = df_bac.dropna(subset=['Fecha', 'Num_Tambo']).groupby(['Num_Tambo', 'Fecha'], as_index=False).agg(cols_agg_bac)
+                df_bac_clean['merge_tambo'] = df_bac_clean['Num_Tambo'].astype(str).str.strip().str.upper()
+                df_bac_clean['merge_fecha'] = df_bac_clean['Fecha'].dt.strftime('%Y-%m-%d')
+                df_bac_clean = df_bac_clean[['merge_tambo', 'merge_fecha'] + list(cols_agg_bac.keys())]
+                
+                df = pd.merge(df, df_bac_clean, on=['merge_tambo', 'merge_fecha'], how='left')
+                if 'UFC_Val' in df.columns: df['UFC'] = df['UFC_Val'].combine_first(df.get('UFC', pd.Series(dtype=float)))
+                if 'SCC_Val' in df.columns: df['SCC'] = df['SCC_Val'].combine_first(df.get('SCC', pd.Series(dtype=float)))
+        except Exception as e:
+            st.sidebar.error(f"Error procesando Bacsomatic: {e}")
     
     df['Fecha_Cierre_Viernes'] = df['Fecha'] + pd.to_timedelta((4 - df['Fecha'].dt.weekday) % 7, unit='D')
     df['Fecha_Inicio_Sabado'] = df['Fecha_Cierre_Viernes'] - pd.Timedelta(days=6)
@@ -340,6 +396,8 @@ try:
     ver_grasa = st.sidebar.checkbox("Incluir Grasa", value=True)
     ver_proteina = st.sidebar.checkbox("Incluir Proteína", value=True)
     ver_crioscopia = st.sidebar.checkbox("Incluir Crioscopia", value=True)
+    ver_ufc = st.sidebar.checkbox("Incluir UFC", value=True)
+    ver_scc = st.sidebar.checkbox("Incluir Células Somáticas (SCC)", value=True)
     ver_comparacion = st.sidebar.checkbox("Incluir Comparativa vs. Semana Ant.", value=True)
 
     st.divider()
@@ -362,11 +420,12 @@ try:
         grasa_actual = df_tambo_semana['Grasa'].mean() if 'Grasa' in df_tambo_semana.columns else float('nan')
         prot_actual = df_tambo_semana['Proteina'].mean() if 'Proteina' in df_tambo_semana.columns else float('nan')
         crios_actual = df_tambo_semana['Crioscopia'].mean() if 'Crioscopia' in df_tambo_semana.columns else float('nan')
+        ufc_actual = df_tambo_semana['UFC'].mean() if 'UFC' in df_tambo_semana.columns else float('nan')
+        scc_actual = df_tambo_semana['SCC'].mean() if 'SCC' in df_tambo_semana.columns else float('nan')
         
         hay_datos_previos = not df_tambo_anterior.empty
         
-        # Calcular número total de columnas de métricas
-        num_metrics = 1 + int(ver_temperatura) + int(ver_grasa) + int(ver_proteina) + int(ver_crioscopia)
+        num_metrics = 1 + int(ver_temperatura) + int(ver_grasa) + int(ver_proteina) + int(ver_crioscopia) + int(ver_ufc) + int(ver_scc)
         c1 = st.columns(num_metrics)
         col_idx = 0
         
@@ -396,6 +455,12 @@ try:
             col_idx += 1
         if ver_crioscopia:
             c1[col_idx].metric("Crioscopia Promedio", f"{crios_actual:.3f}".replace('.', ',') if pd.notna(crios_actual) else "S/D")
+            col_idx += 1
+        if ver_ufc:
+            c1[col_idx].metric("UFC Promedio", f"{formato_miles(ufc_actual)}" if pd.notna(ufc_actual) else "S/D")
+            col_idx += 1
+        if ver_scc:
+            c1[col_idx].metric("SCC Promedio", f"{formato_miles(scc_actual)}" if pd.notna(scc_actual) else "S/D")
             
         st.markdown("---")
         st.markdown("**Detalle de retiros:**")
@@ -404,7 +469,9 @@ try:
                    + (['Temperatura'] if ver_temperatura else []) \
                    + (['Grasa'] if ver_grasa else []) \
                    + (['Proteina'] if ver_proteina else []) \
-                   + (['Crioscopia'] if ver_crioscopia else [])
+                   + (['Crioscopia'] if ver_crioscopia else []) \
+                   + (['UFC'] if ver_ufc else []) \
+                   + (['SCC'] if ver_scc else [])
                    
         df_show = df_tambo_semana[cols_vis].copy()
         df_show['Litros_Ticket'] = df_show['Litros_Ticket'].apply(lambda x: formato_miles(x) if pd.notna(x) else '0')
@@ -412,9 +479,11 @@ try:
         if 'Grasa' in df_show.columns: df_show['Grasa'] = df_show['Grasa'].apply(lambda x: f"{x:.2f}%".replace('.', ',') if pd.notna(x) else '-')
         if 'Proteina' in df_show.columns: df_show['Proteina'] = df_show['Proteina'].apply(lambda x: f"{x:.2f}%".replace('.', ',') if pd.notna(x) else '-')
         if 'Crioscopia' in df_show.columns: df_show['Crioscopia'] = df_show['Crioscopia'].apply(lambda x: f"{x:.3f}".replace('.', ',') if pd.notna(x) else '-')
+        if 'UFC' in df_show.columns: df_show['UFC'] = df_show['UFC'].apply(lambda x: formato_miles(x) if pd.notna(x) else '-')
+        if 'SCC' in df_show.columns: df_show['SCC'] = df_show['SCC'].apply(lambda x: formato_miles(x) if pd.notna(x) else '-')
         df_show['Fecha'] = df_show['Fecha'].dt.strftime('%d/%m/%Y')
         
-        st.dataframe(df_show.rename(columns={'Litros_Ticket': 'Litros', 'N_Remito': 'N° de remito', 'Temperatura': 'Temp', 'Crioscopia': 'Crioscop.'}), hide_index=True, use_container_width=True)
+        st.dataframe(df_show.rename(columns={'Litros_Ticket': 'Litros', 'N_Remito': 'N° de remito', 'Temperatura': 'Temp', 'Crioscopia': 'Crioscop.', 'SCC': 'Células Somáticas'}), hide_index=True, use_container_width=True)
         
         # --- ACCIONES: DESCARGAR PDF Y ENVIAR MAIL ---
         st.markdown("---")
@@ -434,6 +503,8 @@ try:
             ver_grasa, 
             ver_proteina, 
             ver_crioscopia,
+            ver_ufc,
+            ver_scc,
             ver_comparacion, 
             hay_datos_previos
         )
