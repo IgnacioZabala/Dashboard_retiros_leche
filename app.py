@@ -23,7 +23,8 @@ url_lab = f"https://drive.google.com/uc?export=download&id={FILE_ID_LAB}"
 
 @st.cache_data(ttl=60)
 def cargar_datos_drive(u_remitos, u_lab):
-    df_remitos = pd.read_excel(u_remitos, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
+    # Leemos la planilla principal detectando la cabecera real
+    df_remitos_raw = pd.read_excel(u_remitos, sheet_name='Résumen OD-PRO-03', skiprows=3)
     df_contactos = pd.read_excel(u_remitos, sheet_name='Código Tambos')
     
     df_lab = pd.DataFrame()
@@ -39,12 +40,11 @@ def cargar_datos_drive(u_remitos, u_lab):
                 break
                 
         df_lab = pd.read_excel(u_lab, sheet_name=xls_lab.sheet_names[0], header=header_row)
-        # Blindaje: Forzar nombres de columnas a texto plano
         df_lab.columns = [str(c).strip() for c in df_lab.columns]
     except Exception as e:
         st.sidebar.warning(f"Advertencia al leer laboratorio: {e}")
         
-    return df_remitos, df_contactos, df_lab
+    return df_remitos_raw, df_contactos, df_lab
 
 def formato_miles(valor):
     return f"{valor:,.0f}".replace(',', '.')
@@ -211,8 +211,10 @@ try:
     df_contactos['Contacto_Nombre'] = df_contactos[col_contacto]
     df_contactos['Email'] = df_contactos[col_email]
     
-    df = df_raw.copy()
+    # Procesamiento flexible de Remitos (tomando las columnas por posición para evitar errores de nombre)
+    df = df_raw.iloc[:, :10].copy() # Tomamos las primeras 10 columnas correspondientes (B a K aprox)
     df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
+    
     df['Num_Tambo'] = df['Num_Tambo'].apply(limpiar_tambo)
     df = df.dropna(subset=['Fecha'])
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce').dt.normalize()
