@@ -13,7 +13,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 st.set_page_config(page_title="Resumen de Recolección - Coopagro", layout="wide")
-st.title("🚜 Panel de Recolección y Liquidación por Tambo")
+st.title("Panel de recolección y liquidación por Tambo")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE PARA LOS 3 ARCHIVOS ---
 FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
@@ -119,7 +119,7 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_
     
     pdf.set_font('Arial', 'B', 12)
     pdf.set_text_color(100, 100, 100)
-    titulo_reporte = 'Resumen mensual de recoleccion' if es_mensual else 'Resumen semanal de recoleccion'
+    titulo_reporte = 'Resumen mensual de recoleccion' if es_mensual else 'Resumen semanal de recolección'
     pdf.cell(0, 6, titulo_reporte, ln=True, align='C')
     pdf.set_text_color(0, 0, 0) 
     pdf.ln(4)
