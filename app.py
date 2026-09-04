@@ -86,8 +86,9 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     
     ruta_logo = "logo.png"
     if os.path.exists(ruta_logo):
-        pdf.image(ruta_logo, x=80, y=10, w=50)
-        pdf.set_y(48) 
+        # Logo el doble de grande (ancho 80mm, centrado en x=65)
+        pdf.image(ruta_logo, x=65, y=10, w=80)
+        pdf.set_y(52) 
     else:
         pdf.set_y(15)
     
@@ -136,16 +137,19 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     pdf.ln(6)
     pdf.set_font('Arial', 'B', 9)
     pdf.set_fill_color(200, 220, 255)
-    pdf.cell(35, 8, 'Fecha', 1, 0, 'C', fill=True)
-    pdf.cell(45, 8, 'N° de remito', 1, 0, 'C', fill=True)
-    pdf.cell(35, 8, 'Litros', 1, 0, 'C', fill=True)
     
+    # Construcción dinámica de cabeceras de tabla en PDF
+    cols_header = [('Fecha', 30), ('N° de remito', 42), ('Litros', 32)]
     if mostrar_temp:
-        pdf.cell(30, 8, 'Temp', 1, 0, 'C', fill=True)
-    if mostrar_grasa or mostrar_prot:
-        pdf.cell(45, 8, 'Solidos (G/P)', 1, 1, 'C', fill=True)
-    else:
-        pdf.cell(0, 8, '', 0, 1)
+        cols_header.append(('Temp', 24))
+    if mostrar_grasa:
+        cols_header.append(('Grasa', 25))
+    if mostrar_prot:
+        cols_header.append(('Proteína', 25))
+        
+    for i, (col_name, col_w) in enumerate(cols_header):
+        is_last = (i == len(cols_header) - 1)
+        pdf.cell(col_w, 8, col_name, 1, 1 if is_last else 0, 'C', fill=True)
     
     pdf.set_font('Arial', '', 9)
     for _, row in df_productor.iterrows():
@@ -153,26 +157,23 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
         remito = str(row['N_Remito']) if pd.notna(row['N_Remito']) else '-'
         litros = formato_miles(row['Litros_Ticket']) if pd.notna(row['Litros_Ticket']) else '0'
         
-        pdf.cell(35, 7, fecha_str, 1, 0, 'C')
-        pdf.cell(45, 7, remito, 1, 0, 'C')
-        pdf.cell(35, 7, litros, 1, 0, 'C')
+        row_cells = [(fecha_str, 30), (remito, 42), (litros, 32)]
         
         if mostrar_temp:
             temp_val = formato_temp(row['Temperatura'])
-            pdf.cell(30, 7, temp_val, 1, 0, 'C')
+            row_cells.append((temp_val, 24))
             
-        if mostrar_grasa or mostrar_prot:
-            g_val = f"{row['Grasa']:.2f}%".replace('.', ',') if (mostrar_grasa and 'Grasa' in df_productor.columns and pd.notna(row['Grasa'])) else ('-' if mostrar_grasa else '')
-            p_val = f"{row['Proteina']:.2f}%".replace('.', ',') if (mostrar_prot and 'Proteina' in df_productor.columns and pd.notna(row['Proteina'])) else ('-' if mostrar_prot else '')
+        if mostrar_grasa:
+            g_val = f"{row['Grasa']:.2f}%".replace('.', ',') if ('Grasa' in df_productor.columns and pd.notna(row['Grasa'])) else '-'
+            row_cells.append((g_val, 25))
             
-            if mostrar_grasa and mostrar_prot:
-                solidos_str = f"{g_val} / {p_val}"
-            else:
-                solidos_str = g_val if mostrar_grasa else p_val
-                
-            pdf.cell(45, 7, solidos_str, 1, 1, 'C')
-        else:
-            pdf.ln(7)
+        if mostrar_prot:
+            p_val = f"{row['Proteina']:.2f}%".replace('.', ',') if ('Proteina' in df_productor.columns and pd.notna(row['Proteina'])) else '-'
+            row_cells.append((p_val, 25))
+            
+        for i, (val, col_w) in enumerate(row_cells):
+            is_last = (i == len(row_cells) - 1)
+            pdf.cell(col_w, 7, val, 1, 1 if is_last else 0, 'C')
         
     return bytes(pdf.output(dest='S'), encoding='latin-1')
 
