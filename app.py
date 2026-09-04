@@ -29,7 +29,6 @@ def cargar_datos_drive(u_remitos, u_lab):
     df_lab = pd.DataFrame()
     
     try:
-        # Volvemos al rango exacto de columnas B:K y skiprows=4 que requiere tu planilla original
         df_remitos_raw = pd.read_excel(u_remitos, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
     except Exception as e:
         st.error(f"Error al leer la solapa de Remitos en Drive: {e}")
@@ -278,6 +277,9 @@ try:
                 
                 df_lab_clean['merge_tambo'] = df_lab_clean['Num_Tambo'].astype(str).str.strip().str.upper()
                 df_lab_clean['merge_fecha'] = df_lab_clean['Fecha'].dt.strftime('%Y-%m-%d')
+                
+                # 🛡️ SOLUCIÓN CLAVE: Eliminamos la columna 'Fecha' de lab_clean para que no colisione con df
+                df_lab_clean = df_lab_clean[['merge_tambo', 'merge_fecha'] + [c for c in cols_agg.keys()]]
                 
                 df = pd.merge(df, df_lab_clean, on=['merge_tambo', 'merge_fecha'], how='left')
                 
