@@ -13,7 +13,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 st.set_page_config(page_title="Resumen de Recolección - Coopagro", layout="wide")
-st.title("Panel de Recolección y Liquidación por Tambo")
+st.title("Panel de recolección y liquidación por Tambo")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE PARA LOS 3 ARCHIVOS ---
 FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
@@ -262,7 +262,16 @@ try:
     df = df.dropna(subset=['Fecha'])
     df['Fecha'] = df['Fecha'].dt.normalize()
 
-    # --- ASIGNACIÓN SECUENCIAL POR ORDEN DE REMITO (DOBLES RETIROS DIARIOS) ---
+    # Inicializar columnas de laboratorio vacías por defecto para evitar KeyErrors
+    for col_lab_init in ['Grasa', 'Proteina', 'Crioscopia', 'UFC', 'SCC']:
+        if col_lab_init not in df.columns:
+            df[col_lab_init] = float('nan')
+
+    # Claves de cruce base en el DataFrame principal
+    df['merge_tambo'] = df['Num_Tambo'].astype(str).str.strip().str.upper()
+    df['merge_fecha'] = df['Fecha'].dt.strftime('%Y-%m-%d')
+
+    # Asignación secuencial por orden de remito (Dobles retiros diarios)
     df = df.sort_values(by=['Num_Tambo', 'Fecha', 'N_Remito'])
     df['orden_remito'] = df.groupby(['Num_Tambo', 'Fecha']).cumcount() + 1
 
@@ -296,7 +305,6 @@ try:
             df_lab['Num_Tambo'] = lista_tambo
             df_lab['Fecha'] = pd.to_datetime(pd.Series(lista_fecha), errors='coerce').dt.normalize()
             
-            # Orden secuencial de laboratorio
             df_lab = df_lab.sort_values(by=['Num_Tambo', 'Fecha'])
             df_lab['orden_remito'] = df_lab.groupby(['Num_Tambo', 'Fecha']).cumcount() + 1
             
@@ -314,11 +322,11 @@ try:
             if col_fp: cols_milko.append('Crioscopia_Lab')
             
             if cols_milko:
-                df_milko_clean = df_lab.dropna(subset=['Fecha', 'Num_Tambo'])[['Num_Tambo', 'Fecha', 'orden_remito'] + cols_milko]
+                df_milko_clean = df_lab.dropna(subset=['Fecha', 'Num_Tambo'])[['Num_Tambo', 'Fecha', 'orden_remito'] + cols_milko].copy()
                 df_milko_clean['merge_tambo'] = df_milko_clean['Num_Tambo'].astype(str).str.strip().str.upper()
                 df_milko_clean['merge_fecha'] = df_milko_clean['Fecha'].dt.strftime('%Y-%m-%d')
                 
-                df = pd.merge(df, df_milko_clean, left_on=['merge_tambo', 'merge_fecha', 'orden_remito'], right_on=['merge_tambo', 'merge_fecha', 'orden_remito'], how='left')
+                df = pd.merge(df, df_milko_clean[['merge_tambo', 'merge_fecha', 'orden_remito'] + cols_milko], on=['merge_tambo', 'merge_fecha', 'orden_remito'], how='left')
                 if 'Grasa_Lab' in df.columns: df['Grasa'] = df['Grasa_Lab'].combine_first(df.get('Grasa', pd.Series(dtype=float)))
                 if 'Proteina_Lab' in df.columns: df['Proteina'] = df['Proteina_Lab'].combine_first(df.get('Proteina', pd.Series(dtype=float)))
                 if 'Crioscopia_Lab' in df.columns: df['Crioscopia'] = df['Crioscopia_Lab'].combine_first(df.get('Crioscopia', pd.Series(dtype=float)))
@@ -369,11 +377,11 @@ try:
             if col_scc: cols_bac.append('SCC_Val')
             
             if cols_bac:
-                df_bac_clean = df_bac.dropna(subset=['Fecha', 'Num_Tambo'])[['Num_Tambo', 'Fecha', 'orden_remito'] + cols_bac]
+                df_bac_clean = df_bac.dropna(subset=['Fecha', 'Num_Tambo'])[['Num_Tambo', 'Fecha', 'orden_remito'] + cols_bac].copy()
                 df_bac_clean['merge_tambo'] = df_bac_clean['Num_Tambo'].astype(str).str.strip().str.upper()
                 df_bac_clean['merge_fecha'] = df_bac_clean['Fecha'].dt.strftime('%Y-%m-%d')
                 
-                df = pd.merge(df, df_bac_clean, left_on=['merge_tambo', 'merge_fecha', 'orden_remito'], right_on=['merge_tambo', 'merge_fecha', 'orden_remito'], how='left')
+                df = pd.merge(df, df_bac_clean[['merge_tambo', 'merge_fecha', 'orden_remito'] + cols_bac], on=['merge_tambo', 'merge_fecha', 'orden_remito'], how='left')
                 if 'UFC_Val' in df.columns: df['UFC'] = df['UFC_Val'].combine_first(df.get('UFC', pd.Series(dtype=float)))
                 if 'SCC_Val' in df.columns: df['SCC'] = df['SCC_Val'].combine_first(df.get('SCC', pd.Series(dtype=float)))
         except Exception as e:
