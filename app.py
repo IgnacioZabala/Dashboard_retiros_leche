@@ -94,7 +94,7 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     
     pdf.set_font('Arial', 'B', 12)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, 'Resumen semanal de recoleccion', ln=True, align='C')
+    pdf.cell(0, 6, 'Resumen semanal de recolección', ln=True, align='C')
     pdf.set_text_color(0, 0, 0) 
     pdf.ln(4)
     pdf.line(15, pdf.get_y(), 195, pdf.get_y()) 
