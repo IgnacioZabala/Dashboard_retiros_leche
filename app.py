@@ -13,7 +13,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 st.set_page_config(page_title="Resumen de Recolección - Coopagro", layout="wide")
-st.title("Panel de recolección y liquidación por Tambo")
+st.title("🚜 Panel de Recolección y Liquidación por Tambo")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE PARA LOS 3 ARCHIVOS ---
 FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
@@ -23,6 +23,12 @@ FILE_ID_BACSOMATIC = "1KeTle24zxjK-clKAuXsAOUzGkfBNXgI8"
 url_remitos = f"https://drive.google.com/uc?export=download&id={FILE_ID_REMITOS}"
 url_lab = f"https://drive.google.com/uc?export=download&id={FILE_ID_LAB}"
 url_bacsomatic = f"https://drive.google.com/uc?export=download&id={FILE_ID_BACSOMATIC}"
+
+# Diccionario para meses en español
+MESES_ES = {
+    1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril', 5: 'Mayo', 6: 'Junio',
+    7: 'Julio', 8: 'Agosto', 9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+}
 
 @st.cache_data(ttl=60)
 def cargar_datos_drive(u_remitos, u_lab, u_bacsomatic):
@@ -119,7 +125,7 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_
     
     pdf.set_font('Arial', 'B', 12)
     pdf.set_text_color(100, 100, 100)
-    titulo_reporte = 'Resumen mensual de recoleccion' if es_mensual else 'Resumen semanal de recolección'
+    titulo_reporte = 'Resumen mensual de recoleccion' if es_mensual else 'Resumen semanal de recoleccion'
     pdf.cell(0, 6, titulo_reporte, ln=True, align='C')
     pdf.set_text_color(0, 0, 0) 
     pdf.ln(4)
@@ -157,7 +163,7 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_
     if mostrar_prot and pd.notna(proteina_prom): partes_solidos.append(f"Proteina: {proteina_prom:.2f}%".replace('.', ','))
     if mostrar_crios and pd.notna(crios_prom): partes_solidos.append(f"Crioscopia: {crios_prom:.3f}".replace('.', ','))
     if mostrar_ufc and pd.notna(ufc_prom): partes_solidos.append(f"UFC: {formato_miles(ufc_prom)}")
-    if mostrar_scc and pd.notna(scc_prom): partes_solidos.append(f"SCC: {formato_miles(scc_prom)}")
+    if mostrar_scc and pd.notna(scc_prom): partes_solidos.append(f"Células Somáticas: {formato_miles(scc_prom)}")
         
     if partes_solidos:
         pdf.cell(0, 6, f"Promedios Lab -> {' | '.join(partes_solidos)}", ln=True)
@@ -170,9 +176,9 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_
     if mostrar_temp: cols_header.append(('Temp', 18))
     if mostrar_grasa: cols_header.append(('Grasa', 20))
     if mostrar_prot: cols_header.append(('Proteína', 20))
-    if mostrar_crios: cols_header.append(('Crios.', 18))
+    if mostrar_crios: cols_header.append(('Crioscopia', 25))
     if mostrar_ufc: cols_header.append(('UFC', 18))
-    if mostrar_scc: cols_header.append(('SCC', 18))
+    if mostrar_scc: cols_header.append(('Células Somáticas', 28))
         
     for i, (col_name, col_w) in enumerate(cols_header):
         is_last = (i == len(cols_header) - 1)
@@ -189,9 +195,9 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_
         if mostrar_temp: row_cells.append((formato_temp(row['Temperatura']), 18))
         if mostrar_grasa: row_cells.append((f"{row['Grasa']:.2f}%".replace('.', ',') if ('Grasa' in df_productor.columns and pd.notna(row['Grasa'])) else '-', 20))
         if mostrar_prot: row_cells.append((f"{row['Proteina']:.2f}%".replace('.', ',') if ('Proteina' in df_productor.columns and pd.notna(row['Proteina'])) else '-', 20))
-        if mostrar_crios: row_cells.append((f"{row['Crioscopia']:.3f}".replace('.', ',') if ('Crioscopia' in df_productor.columns and pd.notna(row['Crioscopia'])) else '-', 18))
+        if mostrar_crios: row_cells.append((f"{row['Crioscopia']:.3f}".replace('.', ',') if ('Crioscopia' in df_productor.columns and pd.notna(row['Crioscopia'])) else '-', 25))
         if mostrar_ufc: row_cells.append((formato_miles(row['UFC']) if ('UFC' in df_productor.columns and pd.notna(row['UFC'])) else '-', 18))
-        if mostrar_scc: row_cells.append((formato_miles(row['SCC']) if ('SCC' in df_productor.columns and pd.notna(row['SCC'])) else '-', 18))
+        if mostrar_scc: row_cells.append((formato_miles(row['SCC']) if ('SCC' in df_productor.columns and pd.notna(row['SCC'])) else '-', 28))
             
         for i, (val, col_w) in enumerate(row_cells):
             is_last = (i == len(row_cells) - 1)
@@ -369,22 +375,22 @@ try:
     
     df['Fecha_Cierre_Viernes'] = df['Fecha'] + pd.to_timedelta((4 - df['Fecha'].dt.weekday) % 7, unit='D')
     df['Fecha_Inicio_Sabado'] = df['Fecha_Cierre_Viernes'] - pd.Timedelta(days=6)
-    df['Ciclo_Semana'] = df.apply(lambda r: f"Viernes {r['Fecha_Cierre_Viernes'].strftime('%d/%m/%Y')} (Sab {r['Fecha_Inicio_Sabado'].strftime('%d/%m/%Y')} al Vie {r['Fecha_Cierre_Viernes'].strftime('%d/%m/%Y')})", axis=1)
+    df['Ciclo_Semana'] = df.apply(lambda r: f"Viernes {r['Fecha_Cierre_Viernes'].strftime('%d/%m/%Y')} (Sáb {r['Fecha_Inicio_Sabado'].strftime('%d/%m/%Y')} al Vie {r['Fecha_Cierre_Viernes'].strftime('%d/%m/%Y')})", axis=1)
     
     # --- MENÚ LATERAL: TIPO DE REPORTE (SEMANAL VS MENSUAL) ---
     st.sidebar.header("Tipo de Reporte")
-    tipo_reporte_opcion = st.sidebar.radio("Seleccione la modalidad:", ["Semanal (Sáb a Vie)", "Mensual (Ej. Agosto)"])
+    tipo_reporte_opcion = st.sidebar.radio("Seleccione la modalidad:", ["Semanal", "Mensual"])
 
     st.sidebar.markdown("---")
     st.sidebar.header("Filtros de Reporte")
     
-    if tipo_reporte_opcion == "Semanal (Sáb a Vie)":
+    if tipo_reporte_opcion == "Semanal":
         ciclos_disponibles = df[['Fecha_Cierre_Viernes', 'Ciclo_Semana']].drop_duplicates().sort_values('Fecha_Cierre_Viernes', ascending=False)['Ciclo_Semana'].tolist()
         if not ciclos_disponibles:
             st.warning("No hay ciclos de semana disponibles en los datos cargados.")
             st.stop()
             
-        ciclo_seleccionado = st.sidebar.selectbox("1. Selecciona el Cierre de Semana:", ciclos_disponibles)
+        ciclo_seleccionado = st.sidebar.selectbox("1. Seleccione el Cierre de Semana:", ciclos_disponibles)
         df_filtrado_periodo = df[df['Ciclo_Semana'] == ciclo_seleccionado]
         
         mapeo_tambos = df_filtrado_periodo[['Tambo', 'Num_Tambo']].dropna().drop_duplicates().sort_values(by='Tambo', ascending=True)
@@ -392,7 +398,7 @@ try:
             st.warning("No hay tambos en este periodo.")
             st.stop()
             
-        tambo_nombre_seleccionado = st.sidebar.selectbox("2. Selecciona el Tambo:", mapeo_tambos['Tambo'].tolist())
+        tambo_nombre_seleccionado = st.sidebar.selectbox("2. Seleccione el Tambo:", mapeo_tambos['Tambo'].tolist())
         tambo_seleccionado = mapeo_tambos[mapeo_tambos['Tambo'] == tambo_nombre_seleccionado]['Num_Tambo'].values[0]
 
         st.sidebar.markdown("---")
@@ -489,7 +495,7 @@ try:
             if 'SCC' in df_show.columns: df_show['SCC'] = df_show['SCC'].apply(lambda x: formato_miles(x) if pd.notna(x) else '-')
             df_show['Fecha'] = df_show['Fecha'].dt.strftime('%d/%m/%Y')
             
-            st.dataframe(df_show.rename(columns={'Litros_Ticket': 'Litros', 'N_Remito': 'N° de remito', 'Temperatura': 'Temp', 'Crioscopia': 'Crioscop.', 'SCC': 'Células Somáticas'}), hide_index=True, use_container_width=True)
+            st.dataframe(df_show.rename(columns={'Litros_Ticket': 'Litros', 'N_Remito': 'N° de remito', 'Temperatura': 'Temp', 'Crioscopia': 'Crioscopia', 'SCC': 'Células Somáticas'}), hide_index=True, use_container_width=True)
             
             st.markdown("---")
             col_btn1, col_btn2 = st.columns(2)
@@ -532,7 +538,12 @@ try:
             st.warning("No hay meses disponibles en los datos cargados.")
             st.stop()
             
-        mes_seleccionado = st.sidebar.selectbox("1. Selecciona el Mes:", meses_disponibles, format_func=lambda x: x.strftime('%B %Y'))
+        def formatear_mes_es(periodo):
+            mes_num = periodo.month
+            anio = periodo.year
+            return f"{MESES_ES.get(mes_num, periodo.strftime('%B'))} {anio}"
+
+        mes_seleccionado = st.sidebar.selectbox("1. Seleccione el Mes:", meses_disponibles, format_func=formatear_mes_es)
         df_mes_actual = df[df['AnioMes'] == mes_seleccionado]
         
         mapeo_tambos = df_mes_actual[['Tambo', 'Num_Tambo']].dropna().drop_duplicates().sort_values(by='Tambo', ascending=True)
@@ -540,7 +551,7 @@ try:
             st.warning("No hay tambos en este mes.")
             st.stop()
             
-        tambo_nombre_seleccionado = st.sidebar.selectbox("2. Selecciona el Tambo:", mapeo_tambos['Tambo'].tolist())
+        tambo_nombre_seleccionado = st.sidebar.selectbox("2. Seleccione el Tambo:", mapeo_tambos['Tambo'].tolist())
         tambo_seleccionado = mapeo_tambos[mapeo_tambos['Tambo'] == tambo_nombre_seleccionado]['Num_Tambo'].values[0]
 
         st.sidebar.markdown("---")
@@ -556,7 +567,7 @@ try:
         df_tambo_mes = df_mes_actual[df_mes_actual['Num_Tambo'] == str(tambo_seleccionado)].sort_values('Fecha')
         
         if not df_tambo_mes.empty:
-            nombre_mes_str = mes_seleccionado.strftime('%B %Y')
+            nombre_mes_str = formatear_mes_es(mes_seleccionado)
             st.subheader(f"Resumen Mensual ({nombre_mes_str}) - {tambo_nombre_seleccionado} (Código #{tambo_seleccionado})")
             
             info_contacto = df_contactos[df_contactos['Num_Tambo'] == str(tambo_seleccionado)]
@@ -616,7 +627,7 @@ try:
             if 'SCC' in df_show.columns: df_show['SCC'] = df_show['SCC'].apply(lambda x: formato_miles(x) if pd.notna(x) else '-')
             df_show['Fecha'] = df_show['Fecha'].dt.strftime('%d/%m/%Y')
             
-            st.dataframe(df_show.rename(columns={'Litros_Ticket': 'Litros', 'N_Remito': 'N° de remito', 'Temperatura': 'Temp', 'Crioscopia': 'Crioscop.', 'SCC': 'Células Somáticas'}), hide_index=True, use_container_width=True)
+            st.dataframe(df_show.rename(columns={'Litros_Ticket': 'Litros', 'N_Remito': 'N° de remito', 'Temperatura': 'Temp', 'Crioscopia': 'Crioscopia', 'SCC': 'Células Somáticas'}), hide_index=True, use_container_width=True)
             
             st.markdown("---")
             col_btn1, col_btn2 = st.columns(2)
