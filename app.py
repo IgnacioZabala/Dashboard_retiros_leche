@@ -13,7 +13,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 st.set_page_config(page_title="Resumen de Recolección - Coopagro", layout="wide")
-st.title("Panel de recolección y liquidación por Tambo")
+st.title("Panel de Recolección y Liquidación por Tambo")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE PARA LOS 3 ARCHIVOS ---
 FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
@@ -262,10 +262,11 @@ try:
     df = df.dropna(subset=['Fecha'])
     df['Fecha'] = df['Fecha'].dt.normalize()
 
-    df['merge_tambo'] = df['Num_Tambo'].astype(str).str.strip().str.upper()
-    df['merge_fecha'] = df['Fecha'].dt.strftime('%Y-%m-%d')
+    # --- ASIGNACIÓN SECUENCIAL POR ORDEN DE REMITO (DOBLES RETIROS DIARIOS) ---
+    df = df.sort_values(by=['Num_Tambo', 'Fecha', 'N_Remito'])
+    df['orden_remito'] = df.groupby(['Num_Tambo', 'Fecha']).cumcount() + 1
 
-    # 1. PROCESAR MILFOSCAN
+    # 1. PROCESAR MILFOSCAN CON SECUENCIA
     if not df_lab_raw.empty:
         try:
             df_lab = df_lab_raw.copy()
@@ -295,6 +296,10 @@ try:
             df_lab['Num_Tambo'] = lista_tambo
             df_lab['Fecha'] = pd.to_datetime(pd.Series(lista_fecha), errors='coerce').dt.normalize()
             
+            # Orden secuencial de laboratorio
+            df_lab = df_lab.sort_values(by=['Num_Tambo', 'Fecha'])
+            df_lab['orden_remito'] = df_lab.groupby(['Num_Tambo', 'Fecha']).cumcount() + 1
+            
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
             col_prot = next((c for c in df_lab.columns if 'protein' in c.lower() or 'proteina' in c.lower()), None)
             col_fp = next((c for c in df_lab.columns if c.lower() == 'fp' or 'crios' in c.lower() or 'congelacion' in c.lower()), None)
@@ -303,25 +308,24 @@ try:
             if col_prot: df_lab['Proteina_Lab'] = pd.to_numeric(df_lab[col_prot].astype(str).str.replace(',', '.'), errors='coerce')
             if col_fp: df_lab['Crioscopia_Lab'] = pd.to_numeric(df_lab[col_fp].astype(str).str.replace(',', '.'), errors='coerce')
                 
-            cols_agg_milko = {}
-            if col_fat: cols_agg_milko['Grasa_Lab'] = 'mean'
-            if col_prot: cols_agg_milko['Proteina_Lab'] = 'mean'
-            if col_fp: cols_agg_milko['Crioscopia_Lab'] = 'mean'
+            cols_milko = []
+            if col_fat: cols_milko.append('Grasa_Lab')
+            if col_prot: cols_milko.append('Proteina_Lab')
+            if col_fp: cols_milko.append('Crioscopia_Lab')
             
-            if cols_agg_milko:
-                df_milko_clean = df_lab.dropna(subset=['Fecha', 'Num_Tambo']).groupby(['Num_Tambo', 'Fecha'], as_index=False).agg(cols_agg_milko)
+            if cols_milko:
+                df_milko_clean = df_lab.dropna(subset=['Fecha', 'Num_Tambo'])[['Num_Tambo', 'Fecha', 'orden_remito'] + cols_milko]
                 df_milko_clean['merge_tambo'] = df_milko_clean['Num_Tambo'].astype(str).str.strip().str.upper()
                 df_milko_clean['merge_fecha'] = df_milko_clean['Fecha'].dt.strftime('%Y-%m-%d')
-                df_milko_clean = df_milko_clean[['merge_tambo', 'merge_fecha'] + list(cols_agg_milko.keys())]
                 
-                df = pd.merge(df, df_milko_clean, on=['merge_tambo', 'merge_fecha'], how='left')
+                df = pd.merge(df, df_milko_clean, left_on=['merge_tambo', 'merge_fecha', 'orden_remito'], right_on=['merge_tambo', 'merge_fecha', 'orden_remito'], how='left')
                 if 'Grasa_Lab' in df.columns: df['Grasa'] = df['Grasa_Lab'].combine_first(df.get('Grasa', pd.Series(dtype=float)))
                 if 'Proteina_Lab' in df.columns: df['Proteina'] = df['Proteina_Lab'].combine_first(df.get('Proteina', pd.Series(dtype=float)))
                 if 'Crioscopia_Lab' in df.columns: df['Crioscopia'] = df['Crioscopia_Lab'].combine_first(df.get('Crioscopia', pd.Series(dtype=float)))
         except Exception as e:
             st.sidebar.error(f"Error procesando Milko: {e}")
 
-    # 2. PROCESAR BACSOMATIC
+    # 2. PROCESAR BACSOMATIC CON SECUENCIA
     if not df_bac_raw.empty:
         try:
             df_bac = df_bac_raw.copy()
@@ -351,23 +355,25 @@ try:
             df_bac['Num_Tambo'] = lista_tambo_bac
             df_bac['Fecha'] = pd.to_datetime(pd.Series(lista_fecha_bac), errors='coerce').dt.normalize()
             
+            df_bac = df_bac.sort_values(by=['Num_Tambo', 'Fecha'])
+            df_bac['orden_remito'] = df_bac.groupby(['Num_Tambo', 'Fecha']).cumcount() + 1
+            
             col_ufc = next((c for c in df_bac.columns if 'ufc' in c.lower()), None)
             col_scc = next((c for c in df_bac.columns if 'scc' in c.lower() or 'celulas' in c.lower() or 'somáticas' in c.lower()), None)
             
             if col_ufc: df_bac['UFC_Val'] = pd.to_numeric(df_bac[col_ufc].astype(str).str.replace(',', '.'), errors='coerce')
             if col_scc: df_bac['SCC_Val'] = pd.to_numeric(df_bac[col_scc].astype(str).str.replace(',', '.'), errors='coerce')
             
-            cols_agg_bac = {}
-            if col_ufc: cols_agg_bac['UFC_Val'] = 'mean'
-            if col_scc: cols_agg_bac['SCC_Val'] = 'mean'
+            cols_bac = []
+            if col_ufc: cols_bac.append('UFC_Val')
+            if col_scc: cols_bac.append('SCC_Val')
             
-            if cols_agg_bac:
-                df_bac_clean = df_bac.dropna(subset=['Fecha', 'Num_Tambo']).groupby(['Num_Tambo', 'Fecha'], as_index=False).agg(cols_agg_bac)
+            if cols_bac:
+                df_bac_clean = df_bac.dropna(subset=['Fecha', 'Num_Tambo'])[['Num_Tambo', 'Fecha', 'orden_remito'] + cols_bac]
                 df_bac_clean['merge_tambo'] = df_bac_clean['Num_Tambo'].astype(str).str.strip().str.upper()
                 df_bac_clean['merge_fecha'] = df_bac_clean['Fecha'].dt.strftime('%Y-%m-%d')
-                df_bac_clean = df_bac_clean[['merge_tambo', 'merge_fecha'] + list(cols_agg_bac.keys())]
                 
-                df = pd.merge(df, df_bac_clean, on=['merge_tambo', 'merge_fecha'], how='left')
+                df = pd.merge(df, df_bac_clean, left_on=['merge_tambo', 'merge_fecha', 'orden_remito'], right_on=['merge_tambo', 'merge_fecha', 'orden_remito'], how='left')
                 if 'UFC_Val' in df.columns: df['UFC'] = df['UFC_Val'].combine_first(df.get('UFC', pd.Series(dtype=float)))
                 if 'SCC_Val' in df.columns: df['SCC'] = df['SCC_Val'].combine_first(df.get('SCC', pd.Series(dtype=float)))
         except Exception as e:
@@ -412,7 +418,7 @@ try:
         ver_comparacion = st.sidebar.checkbox("Incluir Comparativa vs. Semana Ant.", value=True)
 
         st.divider()
-        df_tambo_periodo = df_filtrado_periodo[df_filtrado_periodo['Num_Tambo'] == str(tambo_seleccionado)].sort_values('Fecha')
+        df_tambo_periodo = df_filtrado_periodo[df_filtrado_periodo['Num_Tambo'] == str(tambo_seleccionado)].sort_values(['Fecha', 'N_Remito'])
         
         if not df_tambo_periodo.empty:
             f_inicio = df_tambo_periodo['Fecha_Inicio_Sabado'].iloc[0].strftime('%d/%m/%Y')
@@ -564,7 +570,7 @@ try:
         ver_scc = st.sidebar.checkbox("Incluir Células Somáticas (SCC)", value=True)
 
         st.divider()
-        df_tambo_mes = df_mes_actual[df_mes_actual['Num_Tambo'] == str(tambo_seleccionado)].sort_values('Fecha')
+        df_tambo_mes = df_mes_actual[df_mes_actual['Num_Tambo'] == str(tambo_seleccionado)].sort_values(['Fecha', 'N_Remito'])
         
         if not df_tambo_mes.empty:
             nombre_mes_str = formatear_mes_es(mes_seleccionado)
