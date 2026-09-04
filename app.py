@@ -113,12 +113,17 @@ def extraer_fecha_texto(texto):
     return None
 
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_crios, mostrar_ufc, mostrar_scc, mostrar_comp, hay_datos_previos, es_mensual=False):
-    pdf = FPDF()
+    # Usamos orientación horizontal (Landscape 'L') para que entren cómodamente todas las columnas
+    pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
+    
+    # Ancho útil en formato A4 Horizontal con márgenes de 15 mm a cada lado: 297 - 30 = 267 mm
+    usable_width = 267
     
     ruta_logo = "logo.png"
     if os.path.exists(ruta_logo):
-        pdf.image(ruta_logo, x=65, y=10, w=80)
+        # Centrado horizontal para hoja A4 Landscape (297 mm de ancho / 2 = 148.5)
+        pdf.image(ruta_logo, x=108, y=10, w=80)
         pdf.set_y(52) 
     else:
         pdf.set_y(15)
@@ -129,7 +134,7 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_
     pdf.cell(0, 6, titulo_reporte, ln=True, align='C')
     pdf.set_text_color(0, 0, 0) 
     pdf.ln(4)
-    pdf.line(15, pdf.get_y(), 195, pdf.get_y()) 
+    pdf.line(15, pdf.get_y(), 282, pdf.get_y()) 
     pdf.ln(6)
     pdf.set_font('Arial', 'B', 11)
     pdf.cell(0, 7, f'Productor: {tambo_nombre} (Codigo #{tambo_id})', ln=True)
@@ -172,16 +177,22 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_
     pdf.set_font('Arial', 'B', 9)
     pdf.set_fill_color(200, 220, 255)
     
-    cols_header = [('Fecha', 26), ('N° de remito', 38), ('Litros', 26)]
-    if mostrar_temp: cols_header.append(('Temp', 18))
-    if mostrar_grasa: cols_header.append(('Grasa', 20))
-    if mostrar_prot: cols_header.append(('Proteína', 20))
-    if mostrar_crios: cols_header.append(('Crioscopia', 25))
-    if mostrar_ufc: cols_header.append(('UFC', 18))
-    if mostrar_scc: cols_header.append(('Células Somáticas', 28))
+    # Definición de columnas base obligatorias
+    cols_header = [('Fecha', 35), ('N° de remito', 50), ('Litros', 35)]
+    if mostrar_temp: cols_header.append(('Temp', 25))
+    if mostrar_grasa: cols_header.append(('Grasa', 30))
+    if mostrar_prot: cols_header.append(('Proteína', 30))
+    if mostrar_crios: cols_header.append(('Crioscopia', 35))
+    if mostrar_ufc: cols_header.append(('UFC', 30))
+    if mostrar_scc: cols_header.append(('Células Somáticas', 37))
         
-    for i, (col_name, col_w) in enumerate(cols_header):
-        is_last = (i == len(cols_header) - 1)
+    # Ajuste automático proporcional para repartir exactamente el ancho útil de la página (267 mm)
+    suma_anchos = sum([w for _, w in cols_header])
+    factor_escala = usable_width / suma_anchos
+    cols_header_ajustado = [(name, w * factor_escala) for name, w in cols_header]
+    
+    for i, (col_name, col_w) in enumerate(cols_header_ajustado):
+        is_last = (i == len(cols_header_ajustado) - 1)
         pdf.cell(col_w, 8, col_name, 1, 1 if is_last else 0, 'C', fill=True)
     
     pdf.set_font('Arial', '', 9)
@@ -190,18 +201,18 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_
         remito = str(row['N_Remito']) if pd.notna(row['N_Remito']) else '-'
         litros = formato_miles(row['Litros_Ticket']) if pd.notna(row['Litros_Ticket']) else '0'
         
-        row_cells = [(fecha_str, 26), (remito, 38), (litros, 26)]
+        row_vals = [fecha_str, remito, litros]
         
-        if mostrar_temp: row_cells.append((formato_temp(row['Temperatura']), 18))
-        if mostrar_grasa: row_cells.append((f"{row['Grasa']:.2f}%".replace('.', ',') if ('Grasa' in df_productor.columns and pd.notna(row['Grasa'])) else '-', 20))
-        if mostrar_prot: row_cells.append((f"{row['Proteina']:.2f}%".replace('.', ',') if ('Proteina' in df_productor.columns and pd.notna(row['Proteina'])) else '-', 20))
-        if mostrar_crios: row_cells.append((f"{row['Crioscopia']:.3f}".replace('.', ',') if ('Crioscopia' in df_productor.columns and pd.notna(row['Crioscopia'])) else '-', 25))
-        if mostrar_ufc: row_cells.append((formato_miles(row['UFC']) if ('UFC' in df_productor.columns and pd.notna(row['UFC'])) else '-', 18))
-        if mostrar_scc: row_cells.append((formato_miles(row['SCC']) if ('SCC' in df_productor.columns and pd.notna(row['SCC'])) else '-', 28))
+        if mostrar_temp: row_vals.append(formato_temp(row['Temperatura']))
+        if mostrar_grasa: row_vals.append(f"{row['Grasa']:.2f}%".replace('.', ',') if ('Grasa' in df_productor.columns and pd.notna(row['Grasa'])) else '-')
+        if mostrar_prot: row_vals.append(f"{row['Proteina']:.2f}%".replace('.', ',') if ('Proteina' in df_productor.columns and pd.notna(row['Proteina'])) else '-')
+        if mostrar_crios: row_vals.append(f"{row['Crioscopia']:.3f}".replace('.', ',') if ('Crioscopia' in df_productor.columns and pd.notna(row['Crioscopia'])) else '-')
+        if mostrar_ufc: row_vals.append(formato_miles(row['UFC']) if ('UFC' in df_productor.columns and pd.notna(row['UFC'])) else '-')
+        if mostrar_scc: row_vals.append(formato_miles(row['SCC']) if ('SCC' in df_productor.columns and pd.notna(row['SCC'])) else '-')
             
-        for i, (val, col_w) in enumerate(row_cells):
-            is_last = (i == len(row_cells) - 1)
-            pdf.cell(col_w, 7, val, 1, 1 if is_last else 0, 'C')
+        for i, (val, (_, col_w)) in enumerate(zip(row_vals, cols_header_ajustado)):
+            is_last = (i == len(cols_header_ajustado) - 1)
+            pdf.cell(col_w, 7, str(val), 1, 1 if is_last else 0, 'C')
         
     return bytes(pdf.output(dest='S'), encoding='latin-1')
 
@@ -262,16 +273,13 @@ try:
     df = df.dropna(subset=['Fecha'])
     df['Fecha'] = df['Fecha'].dt.normalize()
 
-    # Inicializar columnas de laboratorio vacías por defecto para evitar KeyErrors
     for col_lab_init in ['Grasa', 'Proteina', 'Crioscopia', 'UFC', 'SCC']:
         if col_lab_init not in df.columns:
             df[col_lab_init] = float('nan')
 
-    # Claves de cruce base en el DataFrame principal
     df['merge_tambo'] = df['Num_Tambo'].astype(str).str.strip().str.upper()
     df['merge_fecha'] = df['Fecha'].dt.strftime('%Y-%m-%d')
 
-    # Asignación secuencial por orden de remito (Dobles retiros diarios)
     df = df.sort_values(by=['Num_Tambo', 'Fecha', 'N_Remito'])
     df['orden_remito'] = df.groupby(['Num_Tambo', 'Fecha']).cumcount() + 1
 
