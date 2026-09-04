@@ -44,7 +44,7 @@ def cargar_datos_drive(u_remitos, u_lab):
         header_row = 0
         for idx, row in df_lab_temp.iterrows():
             row_str = " ".join([str(x).lower() for x in row.dropna() if pd.notna(x)])
-            if 'sample' in row_str or 'fat' in row_str or 'protein' in row_str or 'grasa' in row_str:
+            if 'sample' in row_str or 'fat' in row_str or 'protein' in row_str or 'grasa' in row_str or 'fecha' in row_str or 'date' in row_str:
                 header_row = idx
                 break
         df_lab = pd.read_excel(u_lab, sheet_name=xls_lab.sheet_names[0], header=header_row)
@@ -68,7 +68,7 @@ def limpiar_tambo(val):
     if s.isdigit(): s = 'T' + s
     return s
 
-def extraer_fecha_lab(texto):
+def extraer_fecha_texto(texto):
     if pd.isna(texto): return None
     s = str(texto).strip()
     match = re.search(r'(\d{2})[-/]?(\d{2})[-/]?(\d{4})', s)
@@ -223,19 +223,16 @@ try:
     df_contactos['Contacto_Nombre'] = df_contactos[col_contacto]
     df_contactos['Email'] = df_contactos[col_email]
     
-    # Asignación estricta de las 10 columnas correspondientes a B:K
     df = df_raw.iloc[:, :10].copy()
     df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
     
     df['Num_Tambo'] = df['Num_Tambo'].apply(limpiar_tambo)
     df = df.dropna(subset=['Fecha'])
     
-    # Conversión estricta y segura de fechas
     df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
     df = df.dropna(subset=['Fecha'])
     df['Fecha'] = df['Fecha'].dt.normalize()
 
-    # CLAVES DE CRUCE (TEXTO PLANO)
     df['merge_tambo'] = df['Num_Tambo'].astype(str).str.strip().str.upper()
     df['merge_fecha'] = df['Fecha'].dt.strftime('%Y-%m-%d')
 
@@ -244,17 +241,41 @@ try:
             df_lab = df_lab_raw.copy()
             df_lab.columns = [str(c).strip() for c in df_lab.columns]
             
-            col_sample = next((c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower() or 'tambo' in c.lower()), df_lab.columns[0])
+            # 1. Identificar columna de muestra / tambo
+            col_sample = next((c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower() or 'tambo' in c.lower() or 'muestra' in c.lower()), df_lab.columns[0])
+            
+            # 2. Identificar si hay una columna dedicada de fecha en laboratorio
+            col_date_lab = next((c for c in df_lab.columns if 'fecha' in c.lower() or 'date' in c.lower() or 'time' in c.lower()), None)
             
             lista_tambo, lista_fecha = [], []
-            for val in df_lab[col_sample]:
-                if pd.isna(val):
+            for _, r_lab in df_lab.iterrows():
+                val_sample = r_lab[col_sample]
+                if pd.isna(val_sample):
                     lista_tambo.append(None)
                     lista_fecha.append(None)
                     continue
-                texto = str(val).strip()
-                t_limpio = limpiar_tambo(texto.split()[0]) if len(texto.split()) > 0 else None
-                f_limpia = extraer_fecha_lab(texto)
+                
+                texto = str(val_sample).strip()
+                partes = texto.split()
+                t_limpio = limpiar_tambo(partes[0]) if len(partes) > 0 else None
+                
+                # Obtener fecha: primero de la columna dedicada si existe, sino extraer del texto
+                f_limpia = None
+                if col_date_lab and pd.notna(r_lab[col_date_lab]):
+                    f_limpia = pd.to_datetime(r_lab[col_date_lab], errors='coerce')
+                    if pd.notna(f_limpia):
+                        f_limpia = f_limpia.normalize()
+                
+                if f_limpia is None:
+                    # Buscar en todas las partes o en el texto completo
+                    for p in partes:
+                        f_int = extraer_fecha_texto(p)
+                        if f_int is not None:
+                            f_limpia = f_int
+                            break
+                    if f_limpia is None:
+                        f_limpia = extraer_fecha_texto(texto)
+                
                 lista_tambo.append(t_limpio)
                 lista_fecha.append(f_limpia)
             
@@ -278,7 +299,6 @@ try:
                 df_lab_clean['merge_tambo'] = df_lab_clean['Num_Tambo'].astype(str).str.strip().str.upper()
                 df_lab_clean['merge_fecha'] = df_lab_clean['Fecha'].dt.strftime('%Y-%m-%d')
                 
-                # 🛡️ SOLUCIÓN CLAVE: Eliminamos la columna 'Fecha' de lab_clean para que no colisione con df
                 df_lab_clean = df_lab_clean[['merge_tambo', 'merge_fecha'] + [c for c in cols_agg.keys()]]
                 
                 df = pd.merge(df, df_lab_clean, on=['merge_tambo', 'merge_fecha'], how='left')
