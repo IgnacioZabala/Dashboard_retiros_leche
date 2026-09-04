@@ -23,7 +23,7 @@ url_lab = f"https://drive.google.com/uc?export=download&id={FILE_ID_LAB}"
 
 @st.cache_data(ttl=60)
 def cargar_datos_drive(u_remitos, u_lab):
-    # Leemos la planilla principal detectando la cabecera real
+    # Leemos la planilla principal asegurando las filas correctas
     df_remitos_raw = pd.read_excel(u_remitos, sheet_name='Résumen OD-PRO-03', skiprows=3)
     df_contactos = pd.read_excel(u_remitos, sheet_name='Código Tambos')
     
@@ -141,7 +141,7 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     
     pdf.set_font('Arial', '', 9)
     for _, row in df_productor.iterrows():
-        fecha_str = row['Fecha'].strftime('%d/%m/%Y')
+        fecha_str = row['Fecha'].strftime('%d/%m/%Y') if pd.notna(row['Fecha']) else ''
         remito = str(row['N_Remito']) if pd.notna(row['N_Remito']) else '-'
         litros = formato_miles(row['Litros_Ticket']) if pd.notna(row['Litros_Ticket']) else '0'
         
@@ -211,14 +211,17 @@ try:
     df_contactos['Contacto_Nombre'] = df_contactos[col_contacto]
     df_contactos['Email'] = df_contactos[col_email]
     
-    # Procesamiento flexible de Remitos (tomando las columnas por posición para evitar errores de nombre)
-    df = df_raw.iloc[:, :10].copy() # Tomamos las primeras 10 columnas correspondientes (B a K aprox)
+    # Procesamiento flexible por posición de columnas (Columnas B a K del excel)
+    df = df_raw.iloc[:, :10].copy()
     df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
     
     df['Num_Tambo'] = df['Num_Tambo'].apply(limpiar_tambo)
     df = df.dropna(subset=['Fecha'])
-    df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce').dt.normalize()
-    df = df.dropna(subset=['Fecha']) 
+    
+    # Conversión segura de fechas sin errores de 'dt'
+    df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
+    df = df.dropna(subset=['Fecha'])
+    df['Fecha'] = df['Fecha'].dt.normalize()
 
     # CLAVES DE CRUCE (TEXTO PLANO)
     df['merge_tambo'] = df['Num_Tambo'].astype(str).str.strip().str.upper()
@@ -244,7 +247,10 @@ try:
                 lista_fecha.append(f_limpia)
             
             df_lab['Num_Tambo'] = lista_tambo
-            df_lab['Fecha'] = pd.to_datetime(pd.Series(lista_fecha), errors='coerce').dt.normalize()
+            
+            # Conversión segura de fechas de laboratorio
+            s_fechas_lab = pd.to_datetime(pd.Series(lista_fecha), errors='coerce')
+            df_lab['Fecha'] = s_fechas_lab.dt.normalize()
             
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
             col_prot = next((c for c in df_lab.columns if 'protein' in c.lower() or 'proteina' in c.lower()), None)
