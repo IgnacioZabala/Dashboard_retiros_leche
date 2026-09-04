@@ -87,7 +87,7 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     ruta_logo = "logo.png"
     if os.path.exists(ruta_logo):
         # Logo el doble de grande (ancho 80mm, centrado en x=65)
-        pdf.image(ruta_logo, x=65, y=10, w=80)
+        pdf.image(ruta_logo, x=65, y=10, w=160)
         pdf.set_y(52) 
     else:
         pdf.set_y(15)
