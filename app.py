@@ -13,7 +13,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
-st.title("🚜 Panel de Recolección y Liquidación por Tambo")
+st.title("Panel de recolección y liquidación por Tambo")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE ---
 FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
