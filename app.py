@@ -12,11 +12,11 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 st.set_page_config(page_title="Resumen Semanal de Recolección - Coopagro", layout="wide")
-st.title("Panel de recolección y liquidación por Tambo")
+st.title("🚜 Panel de Recolección y Liquidación por Tambo")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE ---
-FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" # Archivo principal (Remitos y Contactos)
-FILE_ID_LAB = "1NNYjM5Aqg9iDdJ85UoALRim8P2A1kaUD"      # Archivo de Laboratorio
+FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
+FILE_ID_LAB = "1NNYjM5Aqg9iDdJ85UoALRim8P2A1kaUD"      
 
 url_remitos = f"https://drive.google.com/uc?export=download&id={FILE_ID_REMITOS}"
 url_lab = f"https://drive.google.com/uc?export=download&id={FILE_ID_LAB}"
@@ -28,7 +28,18 @@ def cargar_datos_drive(u_remitos, u_lab):
     
     try:
         xls_lab = pd.ExcelFile(u_lab)
-        df_lab = pd.read_excel(u_lab, sheet_name=xls_lab.sheet_names[0])
+        # 1. Leemos el archivo sin encabezado para detectar dónde arrancan los datos
+        df_lab_temp = pd.read_excel(u_lab, sheet_name=xls_lab.sheet_names[0], header=None)
+        
+        header_row = 0
+        for idx, row in df_lab_temp.iterrows():
+            row_str = " ".join([str(x).lower() for x in row.dropna()])
+            if 'sample' in row_str or 'fat' in row_str or 'protein' in row_str or 'grasa' in row_str:
+                header_row = idx
+                break
+                
+        # 2. Leemos la planilla aplicando la fila correcta como encabezado (Fila 6 aprox)
+        df_lab = pd.read_excel(u_lab, sheet_name=xls_lab.sheet_names[0], header=header_row)
     except Exception as e:
         df_lab = pd.DataFrame()
         st.warning(f"No se pudo cargar el archivo de laboratorio desde Drive. Detalle: {e}")
@@ -40,26 +51,22 @@ def formato_miles(valor):
     return f"{valor:,.0f}".replace(',', '.')
 
 def formato_temp(valor):
-    if pd.isna(valor):
-        return '-'
+    if pd.isna(valor): return '-'
     return f"{valor:.1f}".replace('.', ',') + "°"
 
 def limpiar_tambo(val):
     if pd.isna(val): return ""
     s = str(val).strip().upper()
-    # Si por error quedó en formato decimal (ej. 10.0), se lo sacamos
     if s.endswith('.0'):
         s = s[:-2]
-    # Si te olvidás la "T" y ponés puro número, el sistema se la agrega solo
+    # Si olvidás la "T" y ponés puro número en el Excel, se la agrega solo
     if s.isdigit():
         s = 'T' + s
     return s
 
 def extraer_fecha_lab(texto):
-    if pd.isna(texto):
-        return None
+    if pd.isna(texto): return None
     s = str(texto).strip()
-    # Buscar formato de 8 dígitos juntos (ej: 23082026)
     match_8 = re.search(r'\b(\d{2})(\d{2})(\d{4})\b', s)
     if match_8:
         d, m, a = match_8.groups()
@@ -67,7 +74,6 @@ def extraer_fecha_lab(texto):
             return pd.to_datetime(f"{a}-{m}-{d}", errors='coerce').normalize()
         except:
             pass
-    # Buscar formato estándar
     try:
         f = pd.to_datetime(s, dayfirst=True, errors='coerce')
         if pd.notna(f):
@@ -262,6 +268,7 @@ try:
             df_lab = df_lab_raw.copy()
             df_lab.columns = df_lab.columns.astype(str).str.strip()
             
+            # Ahora la columna se encontrará de manera exacta
             col_sample = next((c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower() or 'tambo' in c.lower()), df_lab.columns[0])
             
             lista_tambo = []
@@ -276,7 +283,6 @@ try:
                 texto = str(val).strip()
                 partes = texto.split()
                 
-                # Al tomar la primera parte (ej: "T21"), la función limpiar_tambo se encarga del resto
                 t_limpio = limpiar_tambo(partes[0]) if len(partes) > 0 else None
                 
                 f_limpia = None
@@ -293,15 +299,18 @@ try:
                 lista_fecha.append(f_limpia)
             
             df_lab['Num_Tambo'] = lista_tambo
-            df_lab['Fecha'] = lista_fecha
+            # Aseguramos que sea datetime puro
+            df_lab['Fecha'] = pd.to_datetime(lista_fecha).normalize()
             
+            # Buscar Fat y Protein (ya no van a fallar)
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
             col_prot = next((c for c in df_lab.columns if 'protein' in c.lower() or 'proteina' in c.lower()), None)
             
+            # Convertimos asegurando que reemplace la coma de decimales (ej. 3,92 -> 3.92)
             if col_fat:
-                df_lab['Grasa_Lab'] = pd.to_numeric(df_lab[col_fat], errors='coerce')
+                df_lab['Grasa_Lab'] = pd.to_numeric(df_lab[col_fat].astype(str).str.replace(',', '.'), errors='coerce')
             if col_prot:
-                df_lab['Proteina_Lab'] = pd.to_numeric(df_lab[col_prot], errors='coerce')
+                df_lab['Proteina_Lab'] = pd.to_numeric(df_lab[col_prot].astype(str).str.replace(',', '.'), errors='coerce')
                 
             cols_agg = {}
             if col_fat: cols_agg['Grasa_Lab'] = 'mean'
@@ -310,7 +319,7 @@ try:
             if cols_agg:
                 df_lab_clean = df_lab.dropna(subset=['Fecha', 'Num_Tambo']).groupby(['Num_Tambo', 'Fecha'], as_index=False).agg(cols_agg)
                 
-                # CRUCE EXACTO E INFALIBLE
+                # CRUCE INFALIBLE: Mismo formato de Fecha y Num_Tambo
                 df = pd.merge(df, df_lab_clean, on=['Num_Tambo', 'Fecha'], how='left')
                 
                 if 'Grasa_Lab' in df.columns:
