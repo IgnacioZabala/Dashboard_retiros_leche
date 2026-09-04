@@ -241,10 +241,7 @@ try:
             df_lab = df_lab_raw.copy()
             df_lab.columns = [str(c).strip() for c in df_lab.columns]
             
-            # 1. Identificar columna de muestra / tambo
             col_sample = next((c for c in df_lab.columns if 'sample' in c.lower() or 'number' in c.lower() or 'tambo' in c.lower() or 'muestra' in c.lower()), df_lab.columns[0])
-            
-            # 2. Identificar si hay una columna dedicada de fecha en laboratorio
             col_date_lab = next((c for c in df_lab.columns if 'fecha' in c.lower() or 'date' in c.lower() or 'time' in c.lower()), None)
             
             lista_tambo, lista_fecha = [], []
@@ -259,7 +256,6 @@ try:
                 partes = texto.split()
                 t_limpio = limpiar_tambo(partes[0]) if len(partes) > 0 else None
                 
-                # Obtener fecha: primero de la columna dedicada si existe, sino extraer del texto
                 f_limpia = None
                 if col_date_lab and pd.notna(r_lab[col_date_lab]):
                     f_limpia = pd.to_datetime(r_lab[col_date_lab], errors='coerce')
@@ -267,7 +263,6 @@ try:
                         f_limpia = f_limpia.normalize()
                 
                 if f_limpia is None:
-                    # Buscar en todas las partes o en el texto completo
                     for p in partes:
                         f_int = extraer_fecha_texto(p)
                         if f_int is not None:
@@ -395,6 +390,47 @@ try:
         if 'Proteina' in df_show.columns: df_show['Proteina'] = df_show['Proteina'].apply(lambda x: f"{x:.2f}%".replace('.', ',') if pd.notna(x) else '-')
         df_show['Fecha'] = df_show['Fecha'].dt.strftime('%d/%m/%Y')
         st.dataframe(df_show.rename(columns={'Litros_Ticket': 'Litros', 'N_Remito': 'N° de remito', 'Temperatura': 'Temp'}), hide_index=True, use_container_width=True)
+        
+        # --- ACCIONES: DESCARGAR PDF Y ENVIAR MAIL ---
+        st.markdown("---")
+        col_btn1, col_btn2 = st.columns(2)
+        
+        nombre_archivo_pdf = f"Resumen_Semanal_{tambo_nombre_seleccionado.replace(' ', '_')}_{f_inicio.replace('/', '-')}.pdf"
+        
+        pdf_bytes = generar_pdf_bytes(
+            df_tambo_semana, 
+            tambo_nombre_seleccionado, 
+            tambo_seleccionado, 
+            f_inicio, 
+            f_fin, 
+            comp_litros_str, 
+            comp_temp_str, 
+            ver_temperatura, 
+            ver_grasa, 
+            ver_proteina, 
+            ver_comparacion, 
+            hay_datos_previos
+        )
+        
+        with col_btn1:
+            st.download_button(
+                label="📥 Descargar Resumen en PDF",
+                data=pdf_bytes,
+                file_name=nombre_archivo_pdf,
+                mime="application/pdf",
+                use_container_width=True
+            )
+            
+        with col_btn2:
+            if email_tambo:
+                if st.button(f"📧 Enviar por Mail a {nombre_contacto}", use_container_width=True):
+                    exito = enviar_correo_productor(email_tambo, nombre_contacto, tambo_nombre_seleccionado, pdf_bytes, nombre_archivo_pdf)
+                    if exito:
+                        st.success(f"¡Correo enviado con éxito a {email_tambo}!")
+                    else:
+                        st.error("Hubo un error al enviar el correo. Verificá la configuración de credenciales en st.secrets.")
+            else:
+                st.warning("⚠️ Este tambo no tiene un email cargado en la base de contactos.")
     else:
         st.warning("No hay registros para este tambo.")
         
