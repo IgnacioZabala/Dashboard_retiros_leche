@@ -29,10 +29,10 @@ def cargar_datos_drive(u_remitos, u_lab):
     df_lab = pd.DataFrame()
     
     try:
-        # Intentamos leer la solapa de remitos probando distintas filas de cabecera si es necesario
-        df_remitos_raw = pd.read_excel(u_remitos, sheet_name='Résumen OD-PRO-03', skiprows=3)
+        # Volvemos al rango exacto de columnas B:K y skiprows=4 que requiere tu planilla original
+        df_remitos_raw = pd.read_excel(u_remitos, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
     except Exception as e:
-        st.error(f"Error al conectar con la planilla de Remitos en Drive: {e}")
+        st.error(f"Error al leer la solapa de Remitos en Drive: {e}")
         
     try:
         df_contactos = pd.read_excel(u_remitos, sheet_name='Código Tambos')
@@ -204,7 +204,7 @@ def enviar_correo_productor(destinatario_email, nombre_contacto, tambo_nombre, p
     except Exception as e:
         return False
 
-# --- CARGA Y PROCESAMIENTO DE DATOS CON BLINDAJE TOTAL ---
+# --- CARGA Y PROCESAMIENTO DE DATOS ---
 try:
     df_raw, df_contactos_raw, df_lab_raw = cargar_datos_drive(url_remitos, url_lab)
     
@@ -224,12 +224,8 @@ try:
     df_contactos['Contacto_Nombre'] = df_contactos[col_contacto]
     df_contactos['Email'] = df_contactos[col_email]
     
-    # Asignación segura por posición de columnas (Columnas B a K del excel de remitos)
-    if df_raw.shape[1] >= 10:
-        df = df_raw.iloc[:, :10].copy()
-    else:
-        df = df_raw.copy()
-        
+    # Asignación estricta de las 10 columnas correspondientes a B:K
+    df = df_raw.iloc[:, :10].copy()
     df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
     
     df['Num_Tambo'] = df['Num_Tambo'].apply(limpiar_tambo)
@@ -381,7 +377,6 @@ try:
         st.warning("No hay registros para este tambo.")
         
 except Exception as e:
-    # Mostramos el error técnico exacto con trazabilidad para saber dónde ocurrió
     st.error(f"Error procesando los archivos: {e}")
     with st.expander("Ver detalles técnicos del error"):
         st.code(traceback.format_exc())
