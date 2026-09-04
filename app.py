@@ -13,7 +13,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 st.set_page_config(page_title="Resumen de Recolección - Coopagro", layout="wide")
-st.title("Panel de recolección y liquidación por Tambo")
+st.title("🚜 Panel de Recolección y Liquidación por Tambo")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE PARA LOS 3 ARCHIVOS ---
 FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
@@ -88,7 +88,9 @@ def limpiar_tambo(val):
     if pd.isna(val): return ""
     s = str(val).strip().upper()
     if s.endswith('.0'): s = s[:-2]
-    if s.isdigit(): s = 'T' + s
+    # Si es puramente numérico le agregamos 'T', si tiene guiones (ej 16-1) lo dejamos tal cual en mayúscula
+    if s.isdigit(): 
+        s = 'T' + s
     return s
 
 def extraer_fecha_texto(texto):
@@ -113,16 +115,13 @@ def extraer_fecha_texto(texto):
     return None
 
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_crios, mostrar_ufc, mostrar_scc, mostrar_comp, hay_datos_previos, es_mensual=False):
-    # Usamos orientación horizontal (Landscape 'L') para que entren cómodamente todas las columnas
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
-    # Ancho útil en formato A4 Horizontal con márgenes de 15 mm a cada lado: 297 - 30 = 267 mm
     usable_width = 267
     
     ruta_logo = "logo.png"
     if os.path.exists(ruta_logo):
-        # Centrado horizontal para hoja A4 Landscape (297 mm de ancho / 2 = 148.5)
         pdf.image(ruta_logo, x=108, y=10, w=80)
         pdf.set_y(52) 
     else:
@@ -177,7 +176,6 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_
     pdf.set_font('Arial', 'B', 9)
     pdf.set_fill_color(200, 220, 255)
     
-    # Definición de columnas base obligatorias
     cols_header = [('Fecha', 35), ('N° de remito', 50), ('Litros', 35)]
     if mostrar_temp: cols_header.append(('Temp', 25))
     if mostrar_grasa: cols_header.append(('Grasa', 30))
@@ -186,7 +184,6 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_
     if mostrar_ufc: cols_header.append(('UFC', 30))
     if mostrar_scc: cols_header.append(('Células Somáticas', 37))
         
-    # Ajuste automático proporcional para repartir exactamente el ancho útil de la página (267 mm)
     suma_anchos = sum([w for _, w in cols_header])
     factor_escala = usable_width / suma_anchos
     cols_header_ajustado = [(name, w * factor_escala) for name, w in cols_header]
@@ -222,10 +219,13 @@ def enviar_correo_productor(destinatario_email, nombre_contacto, tambo_nombre, p
         password = st.secrets["email"]["password"]
         msg = MIMEMultipart()
         msg['From'] = remitente
-        msg['To'] = destinatario_email
+        
+        # Limpiar y separar emails si hay varios separados por punto y coma
+        destinatarios = [e.strip() for e in destinatario_email.replace(';', ',').split(',') if e.strip()]
+        msg['To'] = ", ".join(destinatarios)
         msg['Subject'] = f"Resumen {tipo_reporte.capitalize()} de Recolección - {tambo_nombre}"
         
-        cuerpo_html = f"<html><body><p>Buenas tardes, <b>{nombre_contacto}</b>:</p><p>Te adjunto el resumen {tipo_reporte} de recolección y calidad de leche.</p></body></html>"
+        cuerpo_html = f"<html><body><p>Buenas tardes, <b>{nombre_contacto}</b>:</p><p>Le adjunto el resumen {tipo_reporte} de recolección y calidad de leche.</p></body></html>"
         msg.attach(MIMEText(cuerpo_html, 'html'))
         
         part = MIMEBase('application', 'octet-stream')
@@ -237,7 +237,7 @@ def enviar_correo_productor(destinatario_email, nombre_contacto, tambo_nombre, p
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(remitente, password)
-        server.sendmail(remitente, destinatario_email, msg.as_string())
+        server.sendmail(remitente, destinatarios, msg.as_string())
         server.quit()
         return True
     except Exception as e:
@@ -251,18 +251,21 @@ try:
         st.error("El archivo de remitos se cargó vacío o no se pudo acceder a través de Google Drive.")
         st.stop()
 
-    df_contactos = df_contactos_raw.copy()
-    df_contactos.columns = [str(c).strip() for c in df_contactos.columns]
-    cols_c = list(df_contactos.columns)
-    
-    col_codigo = next((c for c in cols_c if 'código' in c.lower() or 'codigo' in c.lower() and 'viejo' not in c.lower()), cols_c[1] if len(cols_c) > 1 else cols_c[0])
-    col_contacto = next((c for c in cols_c if 'contacto' in c.lower() or 'nombre' in c.lower()), cols_c[3] if len(cols_c) > 3 else cols_c[min(2, len(cols_c)-1)])
-    col_email = next((c for c in cols_c if 'email' in c.lower() or 'correo' in c.lower()), cols_c[4] if len(cols_c) > 4 else cols_c[min(len(cols_c)-1, len(cols_c)-1)])
-    
-    df_contactos['Num_Tambo'] = df_contactos[col_codigo].apply(limpiar_tambo)
-    df_contactos['Contacto_Nombre'] = df_contactos[col_contacto]
-    df_contactos['Email'] = df_contactos[col_email]
-    
+    # --- PROCESAMIENTO ROBUSTO DE LA SOLAPA 'Código Tambos' ---
+    df_contactos = pd.DataFrame()
+    if not df_contactos_raw.empty:
+        df_c_temp = df_contactos_raw.copy()
+        df_c_temp.columns = [str(c).strip().lower() for c in df_c_temp.columns]
+        
+        # Identificar columnas por coincidencia de texto
+        col_codigo = next((c for c in df_c_temp.columns if 'código' in c or 'codigo' in c and 'viejo' not in c), df_c_temp.columns[1] if len(df_c_temp.columns) > 1 else df_c_temp.columns[0])
+        col_contacto = next((c for c in df_c_temp.columns if 'contacto' in c or 'nombre' in c), df_c_temp.columns[3] if len(df_c_temp.columns) > 3 else df_c_temp.columns[min(2, len(df_c_temp.columns)-1)])
+        col_email = next((c for c in df_c_temp.columns if 'email' in c or 'correo' in c), df_c_temp.columns[4] if len(df_c_temp.columns) > 4 else df_c_temp.columns[min(len(df_c_temp.columns)-1, len(df_c_temp.columns)-1)])
+        
+        df_contactos['Num_Tambo'] = df_c_temp[col_codigo].apply(limpiar_tambo)
+        df_contactos['Contacto_Nombre'] = df_c_temp[col_contacto]
+        df_contactos['Email'] = df_c_temp[col_email]
+
     df = df_raw.iloc[:, :10].copy()
     df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
     
