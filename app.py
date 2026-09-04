@@ -44,7 +44,7 @@ def cargar_datos_drive(u_remitos, u_lab):
         header_row = 0
         for idx, row in df_lab_temp.iterrows():
             row_str = " ".join([str(x).lower() for x in row.dropna() if pd.notna(x)])
-            if 'sample' in row_str or 'fat' in row_str or 'protein' in row_str or 'grasa' in row_str or 'fecha' in row_str or 'date' in row_str:
+            if 'sample' in row_str or 'fat' in row_str or 'protein' in row_str or 'grasa' in row_str or 'fp' in row_str or 'fecha' in row_str or 'date' in row_str:
                 header_row = idx
                 break
         df_lab = pd.read_excel(u_lab, sheet_name=xls_lab.sheet_names[0], header=header_row)
@@ -80,21 +80,20 @@ def extraer_fecha_texto(texto):
             pass
     return None
 
-def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_comp, hay_datos_previos):
+def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_fin, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_crios, mostrar_comp, hay_datos_previos):
     pdf = FPDF()
     pdf.add_page()
     
     ruta_logo = "logo.png"
     if os.path.exists(ruta_logo):
-        # Logo el doble de grande (ancho 80mm, centrado en x=65)
-        pdf.image(ruta_logo, x=65, y=10, w=85)
+        pdf.image(ruta_logo, x=65, y=10, w=80)
         pdf.set_y(52) 
     else:
         pdf.set_y(15)
     
     pdf.set_font('Arial', 'B', 12)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, 'Resumen semanal de recolección', ln=True, align='C')
+    pdf.cell(0, 6, 'Resumen semanal de recoleccion', ln=True, align='C')
     pdf.set_text_color(0, 0, 0) 
     pdf.ln(4)
     pdf.line(15, pdf.get_y(), 195, pdf.get_y()) 
@@ -108,6 +107,7 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
     temp_prom = df_productor['Temperatura'].mean()
     grasa_prom = df_productor['Grasa'].mean() if 'Grasa' in df_productor.columns else float('nan')
     proteina_prom = df_productor['Proteina'].mean() if 'Proteina' in df_productor.columns else float('nan')
+    crios_prom = df_productor['Crioscopia'].mean() if 'Crioscopia' in df_productor.columns else float('nan')
     
     pdf.ln(3)
     pdf.set_font('Arial', 'B', 10)
@@ -123,30 +123,30 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
             texto_temp += f' ({comp_temp})'
         pdf.cell(0, 6, texto_temp, ln=True)
     
-    if (mostrar_grasa or mostrar_prot) and (pd.notna(grasa_prom) or pd.notna(proteina_prom)):
-        partes_solidos = []
-        if mostrar_grasa:
-            g_str = f"{grasa_prom:.2f}%".replace('.', ',') if pd.notna(grasa_prom) else "S/D"
-            partes_solidos.append(f"Grasa: {g_str}")
-        if mostrar_prot:
-            p_str = f"{proteina_prom:.2f}%".replace('.', ',') if pd.notna(proteina_prom) else "S/D"
-            partes_solidos.append(f"Proteina: {p_str}")
+    partes_solidos = []
+    if mostrar_grasa and pd.notna(grasa_prom):
+        partes_solidos.append(f"Grasa: {grasa_prom:.2f}%".replace('.', ','))
+    if mostrar_prot and pd.notna(proteina_prom):
+        partes_solidos.append(f"Proteina: {proteina_prom:.2f}%".replace('.', ','))
+    if mostrar_crios and pd.notna(crios_prom):
+        partes_solidos.append(f"Crioscopia: {crios_prom:.3f}".replace('.', ','))
         
-        pdf.cell(0, 6, f"Promedio Solidos -> {' | '.join(partes_solidos)}", ln=True)
+    if partes_solidos:
+        pdf.cell(0, 6, f"Promedios Laboratorio -> {' | '.join(partes_solidos)}", ln=True)
     
     pdf.ln(6)
     pdf.set_font('Arial', 'B', 9)
     pdf.set_fill_color(200, 220, 255)
     
-    # Construcción dinámica de cabeceras de tabla en PDF
-    cols_header = [('Fecha', 30), ('N° de remito', 42), ('Litros', 32)]
-    if mostrar_temp:
-        cols_header.append(('Temp', 24))
-    if mostrar_grasa:
-        cols_header.append(('Grasa', 25))
-    if mostrar_prot:
-        cols_header.append(('Proteína', 25))
+    # Cabeceras de tabla ajustadas en ancho según columnas visibles
+    cols_header = [('Fecha', 28), ('N° de remito', 40), ('Litros', 28)]
+    if mostrar_temp: cols_header.append(('Temp', 20))
+    if mostrar_grasa: cols_header.append(('Grasa', 22))
+    if mostrar_prot: cols_header.append(('Proteína', 22))
+    if mostrar_crios: cols_header.append(('Crioscop.', 20))
         
+    total_w = sum([w for _, w in cols_header])
+    # Ajuste proporcional si se pasa del ancho útil (~180mm)
     for i, (col_name, col_w) in enumerate(cols_header):
         is_last = (i == len(cols_header) - 1)
         pdf.cell(col_w, 8, col_name, 1, 1 if is_last else 0, 'C', fill=True)
@@ -157,19 +157,23 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, fecha_inicio, fecha_
         remito = str(row['N_Remito']) if pd.notna(row['N_Remito']) else '-'
         litros = formato_miles(row['Litros_Ticket']) if pd.notna(row['Litros_Ticket']) else '0'
         
-        row_cells = [(fecha_str, 30), (remito, 42), (litros, 32)]
+        row_cells = [(fecha_str, 28), (remito, 40), (litros, 28)]
         
         if mostrar_temp:
             temp_val = formato_temp(row['Temperatura'])
-            row_cells.append((temp_val, 24))
+            row_cells.append((temp_val, 20))
             
         if mostrar_grasa:
             g_val = f"{row['Grasa']:.2f}%".replace('.', ',') if ('Grasa' in df_productor.columns and pd.notna(row['Grasa'])) else '-'
-            row_cells.append((g_val, 25))
+            row_cells.append((g_val, 22))
             
         if mostrar_prot:
             p_val = f"{row['Proteina']:.2f}%".replace('.', ',') if ('Proteina' in df_productor.columns and pd.notna(row['Proteina'])) else '-'
-            row_cells.append((p_val, 25))
+            row_cells.append((p_val, 22))
+            
+        if mostrar_crios:
+            c_val = f"{row['Crioscopia']:.3f}".replace('.', ',') if ('Crioscopia' in df_productor.columns and pd.notna(row['Crioscopia'])) else '-'
+            row_cells.append((c_val, 20))
             
         for i, (val, col_w) in enumerate(row_cells):
             is_last = (i == len(row_cells) - 1)
@@ -281,13 +285,16 @@ try:
             
             col_fat = next((c for c in df_lab.columns if 'fat' in c.lower() or 'grasa' in c.lower()), None)
             col_prot = next((c for c in df_lab.columns if 'protein' in c.lower() or 'proteina' in c.lower()), None)
+            col_fp = next((c for c in df_lab.columns if c.lower() == 'fp' or 'crios' in c.lower() or 'congelacion' in c.lower()), None)
             
             if col_fat: df_lab['Grasa_Lab'] = pd.to_numeric(df_lab[col_fat].astype(str).str.replace(',', '.'), errors='coerce')
             if col_prot: df_lab['Proteina_Lab'] = pd.to_numeric(df_lab[col_prot].astype(str).str.replace(',', '.'), errors='coerce')
+            if col_fp: df_lab['Crioscopia_Lab'] = pd.to_numeric(df_lab[col_fp].astype(str).str.replace(',', '.'), errors='coerce')
                 
             cols_agg = {}
             if col_fat: cols_agg['Grasa_Lab'] = 'mean'
             if col_prot: cols_agg['Proteina_Lab'] = 'mean'
+            if col_fp: cols_agg['Crioscopia_Lab'] = 'mean'
             
             if cols_agg:
                 df_lab_clean = df_lab.dropna(subset=['Fecha', 'Num_Tambo']).groupby(['Num_Tambo', 'Fecha'], as_index=False).agg(cols_agg)
@@ -299,8 +306,9 @@ try:
                 
                 df = pd.merge(df, df_lab_clean, on=['merge_tambo', 'merge_fecha'], how='left')
                 
-                if 'Grasa_Lab' in df.columns: df['Grasa'] = df['Grasa_Lab'].combine_first(df['Grasa'])
-                if 'Proteina_Lab' in df.columns: df['Proteina'] = df['Proteina_Lab'].combine_first(df['Proteina'])
+                if 'Grasa_Lab' in df.columns: df['Grasa'] = df['Grasa_Lab'].combine_first(df.get('Grasa', pd.Series(dtype=float)))
+                if 'Proteina_Lab' in df.columns: df['Proteina'] = df['Proteina_Lab'].combine_first(df.get('Proteina', pd.Series(dtype=float)))
+                if 'Crioscopia_Lab' in df.columns: df['Crioscopia'] = df['Crioscopia_Lab'].combine_first(df.get('Crioscopia', pd.Series(dtype=float)))
                 
         except Exception as err_lab:
             st.sidebar.error(f"Error procesando lab interno: {err_lab}")
@@ -331,6 +339,7 @@ try:
     ver_temperatura = st.sidebar.checkbox("Incluir Temperatura", value=True)
     ver_grasa = st.sidebar.checkbox("Incluir Grasa", value=True)
     ver_proteina = st.sidebar.checkbox("Incluir Proteína", value=True)
+    ver_crioscopia = st.sidebar.checkbox("Incluir Crioscopia", value=True)
     ver_comparacion = st.sidebar.checkbox("Incluir Comparativa vs. Semana Ant.", value=True)
 
     st.divider()
@@ -352,9 +361,13 @@ try:
         temp_actual = df_tambo_semana['Temperatura'].mean()
         grasa_actual = df_tambo_semana['Grasa'].mean() if 'Grasa' in df_tambo_semana.columns else float('nan')
         prot_actual = df_tambo_semana['Proteina'].mean() if 'Proteina' in df_tambo_semana.columns else float('nan')
+        crios_actual = df_tambo_semana['Crioscopia'].mean() if 'Crioscopia' in df_tambo_semana.columns else float('nan')
         
         hay_datos_previos = not df_tambo_anterior.empty
-        c1 = st.columns(sum([1, ver_temperatura, ver_grasa, ver_proteina]))
+        
+        # Calcular número total de columnas de métricas
+        num_metrics = 1 + int(ver_temperatura) + int(ver_grasa) + int(ver_proteina) + int(ver_crioscopia)
+        c1 = st.columns(num_metrics)
         col_idx = 0
         
         comp_litros_str, comp_temp_str = "", ""
@@ -380,17 +393,28 @@ try:
             col_idx += 1
         if ver_proteina:
             c1[col_idx].metric("Proteína Promedio", f"{prot_actual:.2f}%".replace('.', ',') if pd.notna(prot_actual) else "S/D")
+            col_idx += 1
+        if ver_crioscopia:
+            c1[col_idx].metric("Crioscopia Promedio", f"{crios_actual:.3f}".replace('.', ',') if pd.notna(crios_actual) else "S/D")
             
         st.markdown("---")
         st.markdown("**Detalle de retiros:**")
-        cols_vis = ['Fecha', 'N_Remito', 'Litros_Ticket'] + (['Temperatura'] if ver_temperatura else []) + (['Grasa'] if ver_grasa else []) + (['Proteina'] if ver_proteina else [])
+        
+        cols_vis = ['Fecha', 'N_Remito', 'Litros_Ticket'] \
+                   + (['Temperatura'] if ver_temperatura else []) \
+                   + (['Grasa'] if ver_grasa else []) \
+                   + (['Proteina'] if ver_proteina else []) \
+                   + (['Crioscopia'] if ver_crioscopia else [])
+                   
         df_show = df_tambo_semana[cols_vis].copy()
         df_show['Litros_Ticket'] = df_show['Litros_Ticket'].apply(lambda x: formato_miles(x) if pd.notna(x) else '0')
         if ver_temperatura: df_show['Temperatura'] = df_show['Temperatura'].apply(formato_temp)
         if 'Grasa' in df_show.columns: df_show['Grasa'] = df_show['Grasa'].apply(lambda x: f"{x:.2f}%".replace('.', ',') if pd.notna(x) else '-')
         if 'Proteina' in df_show.columns: df_show['Proteina'] = df_show['Proteina'].apply(lambda x: f"{x:.2f}%".replace('.', ',') if pd.notna(x) else '-')
+        if 'Crioscopia' in df_show.columns: df_show['Crioscopia'] = df_show['Crioscopia'].apply(lambda x: f"{x:.3f}".replace('.', ',') if pd.notna(x) else '-')
         df_show['Fecha'] = df_show['Fecha'].dt.strftime('%d/%m/%Y')
-        st.dataframe(df_show.rename(columns={'Litros_Ticket': 'Litros', 'N_Remito': 'N° de remito', 'Temperatura': 'Temp'}), hide_index=True, use_container_width=True)
+        
+        st.dataframe(df_show.rename(columns={'Litros_Ticket': 'Litros', 'N_Remito': 'N° de remito', 'Temperatura': 'Temp', 'Crioscopia': 'Crioscop.'}), hide_index=True, use_container_width=True)
         
         # --- ACCIONES: DESCARGAR PDF Y ENVIAR MAIL ---
         st.markdown("---")
@@ -409,6 +433,7 @@ try:
             ver_temperatura, 
             ver_grasa, 
             ver_proteina, 
+            ver_crioscopia,
             ver_comparacion, 
             hay_datos_previos
         )
