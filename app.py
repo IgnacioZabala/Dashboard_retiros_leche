@@ -21,7 +21,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("Panel de Recolección y Calidad Lechera - Coopagro")
+st.title("🚜 Panel de Recolección y Calidad Lechera - Coopagro")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE PARA LOS 3 ARCHIVOS ---
 FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
@@ -112,6 +112,64 @@ def extraer_fecha_texto(texto):
         try: return pd.to_datetime(f"{a}-{m}-{d}").normalize()
         except: pass
     return None
+
+def calcular_promedio_ponderado(df, columna_valor, columna_peso='Litros_Ticket'):
+    if columna_valor not in df.columns or columna_peso not in df.columns:
+        return float('nan')
+    df_valido = df.dropna(subset=[columna_valor, columna_peso])
+    if df_valido.empty or df_valido[columna_peso].sum() == 0:
+        return float('nan')
+    return (df_valido[columna_valor] * df_valido[columna_peso]).sum() / df_valido[columna_peso].sum()
+
+def generar_pdf_panel_general(df_macro, periodo_titulo, total_litros, temp_prom, grasa_prom, prot_prom, tambos_activos, df_ranking):
+    pdf = FPDF(orientation='L', unit='mm', format='A4')
+    pdf.add_page()
+    usable_width = 267
+    
+    ruta_logo = "logo.png"
+    if os.path.exists(ruta_logo):
+        pdf.image(ruta_logo, x=108, y=10, w=80)
+        pdf.set_y(52) 
+    else:
+        pdf.set_y(15)
+    
+    pdf.set_font('Arial', 'B', 12)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, 'Informe Gerencial de Recoleccion - Cooperativa', ln=True, align='C')
+    pdf.set_text_color(0, 0, 0) 
+    pdf.ln(4)
+    pdf.line(15, pdf.get_y(), 282, pdf.get_y()) 
+    pdf.ln(6)
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(0, 7, f'Periodo Evaluado: {periodo_titulo}', ln=True)
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(0, 6, f'Tambos Activos: {tambos_activos} | Litros Totales: {formato_miles(total_litros)} L', ln=True)
+    pdf.cell(0, 6, f'Temperatura Promedio: {formato_temp(temp_prom)} | Grasa Ponderada: {grasa_prom:.2f}%'.replace('.', ','), ln=True)
+    
+    pdf.ln(6)
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(0, 7, 'Ranking de Tambos por Volumen de Litros', ln=True)
+    
+    pdf.set_font('Arial', 'B', 9)
+    pdf.set_fill_color(200, 220, 255)
+    
+    cols_header = [('Codigo', 40), ('Nombre del Tambo', 137), ('Litros Totales', 90)]
+    for i, (col_name, col_w) in enumerate(cols_header):
+        is_last = (i == len(cols_header) - 1)
+        pdf.cell(col_w, 8, col_name, 1, 1 if is_last else 0, 'C', fill=True)
+    
+    pdf.set_font('Arial', '', 9)
+    for _, row in df_ranking.iterrows():
+        t_cod = str(row['Num_Tambo'])
+        t_nom = str(row['Tambo'])
+        t_lit = formato_miles(row['Litros_Ticket'])
+        
+        row_vals = [t_cod, t_nom, t_lit]
+        for i, (val, (_, col_w)) in enumerate(zip(row_vals, cols_header)):
+            is_last = (i == len(cols_header) - 1)
+            pdf.cell(col_w, 7, str(val), 1, 1 if is_last else 0, 'C' if i != 1 else 'L')
+            
+    return bytes(pdf.output(dest='S'), encoding='latin-1')
 
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_crios, mostrar_ufc, mostrar_scc, mostrar_comp, hay_datos_previos, es_mensual=False):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
@@ -395,7 +453,7 @@ try:
     tipo_reporte_opcion = st.sidebar.radio("Seleccione el periodo:", ["Semanal", "Mensual"])
 
     if vista_principal == "Panel de Control General":
-        st.header("📊 Panel de Control General")
+        st.header("📊 Panel de Control General (Gerencial)")
         st.markdown("Vista global del desempeño de recolección y calidad de la cooperativa.")
         
         st.sidebar.markdown("---")
@@ -406,35 +464,59 @@ try:
             if ciclos_disponibles:
                 ciclo_gen = st.sidebar.selectbox("Seleccione el Cierre de Semana:", ciclos_disponibles)
                 df_macro = df[df['Ciclo_Semana'] == ciclo_gen]
+                periodo_texto_gerencial = ciclo_gen
             else:
                 df_macro = pd.DataFrame()
+                periodo_texto_gerencial = ""
         else:
             meses_disponibles = sorted(df['AnioMes'].unique(), reverse=True)
             def formatear_mes_es(p): return f"{MESES_ES.get(p.month, p.strftime('%B'))} {p.year}"
             if meses_disponibles:
                 mes_gen = st.sidebar.selectbox("Seleccione el Mes:", meses_disponibles, format_func=formatear_mes_es)
                 df_macro = df[df['AnioMes'] == mes_gen]
+                periodo_texto_gerencial = formatear_mes_es(mes_gen)
             else:
                 df_macro = pd.DataFrame()
+                periodo_texto_gerencial = ""
             
         if not df_macro.empty:
             total_coope_litros = df_macro['Litros_Ticket'].sum()
             temp_coope_prom = df_macro['Temperatura'].mean()
-            grasa_coope_prom = df_macro['Grasa'].mean() if 'Grasa' in df_macro.columns else float('nan')
-            prot_coope_prom = df_macro['Proteina'].mean() if 'Proteina' in df_macro.columns else float('nan')
+            
+            # --- CÁLCULO DE GRASA Y PROTEÍNA PONDERADA POR LITROS ---
+            grasa_coope_prom = calcular_promedio_ponderado(df_macro, 'Grasa', 'Litros_Ticket')
+            prot_coope_prom = calcular_promedio_ponderado(df_macro, 'Proteina', 'Litros_Ticket')
+            
             tambos_activos = df_macro['Num_Tambo'].nunique()
             
             mc1, mc2, mc3, mc4 = st.columns(4)
             mc1.metric("🥛 Litros Totales Coope", f"{formato_miles(total_coope_litros)} L")
             mc2.metric("🌡️ Temperatura Media", formato_temp(temp_coope_prom))
             mc3.metric("🐄 Tambos Activos", f"{tambos_activos}")
-            mc4.metric("🧈 Grasa Promedio", f"{grasa_coope_prom:.2f}%".replace('.', ',') if pd.notna(grasa_coope_prom) else "S/D")
+            mc4.metric("🧈 Grasa Ponderada", f"{grasa_coope_prom:.2f}%".replace('.', ',') if pd.notna(grasa_coope_prom) else "S/D")
             
             st.markdown("---")
-            st.subheader("Ranking de Tambos por Volumen")
+            st.subheader("🏆 Ranking de Tambos por Volumen")
             df_ranking = df_macro.groupby(['Tambo', 'Num_Tambo'], as_index=False)['Litros_Ticket'].sum().sort_values(by='Litros_Ticket', ascending=False)
-            df_ranking['Litros_Ticket'] = df_ranking['Litros_Ticket'].apply(formato_miles)
-            st.dataframe(df_ranking.rename(columns={'Tambo': 'Nombre del Tambo', 'Num_Tambo': 'Código', 'Litros_Ticket': 'Litros Totales'}), hide_index=True, use_container_width=True)
+            
+            # Mostrar tabla en la web
+            df_ranking_show = df_ranking.copy()
+            df_ranking_show['Litros_Ticket'] = df_ranking_show['Litros_Ticket'].apply(formato_miles)
+            st.dataframe(df_ranking_show.rename(columns={'Tambo': 'Nombre del Tambo', 'Num_Tambo': 'Código', 'Litros_Ticket': 'Litros Totales'}), hide_index=True, use_container_width=True)
+            
+            # --- BOTÓN PARA DESCARGAR EL INFORME GERENCIAL EN PDF ---
+            st.markdown("---")
+            pdf_gerencial_bytes = generar_pdf_panel_general(
+                df_macro, periodo_texto_gerencial, total_coope_litros, temp_coope_prom, 
+                grasa_coope_prom, prot_coope_prom, tambos_activos, df_ranking
+            )
+            nombre_pdf_gerencial = f"Informe_Gerencial_Cooperativa_{periodo_texto_gerencial.replace(' ', '_').replace('/', '-')}.pdf"
+            st.download_button(
+                label="📥 Descargar Informe Gerencial en PDF", 
+                data=pdf_gerencial_bytes, 
+                file_name=nombre_pdf_gerencial, 
+                mime="application/pdf"
+            )
         else:
             st.info("No hay datos para el periodo seleccionado.")
 
@@ -443,7 +525,6 @@ try:
         st.sidebar.markdown("---")
         st.sidebar.header("Filtros de Tambo")
         
-        # 1. Primero seleccionamos el tambo para filtrar sus periodos disponibles
         mapeo_tambos = df[['Tambo', 'Num_Tambo']].dropna().drop_duplicates().sort_values(by='Tambo', ascending=True)
         if mapeo_tambos.empty:
             st.warning("No hay tambos en los datos cargados.")
@@ -452,13 +533,12 @@ try:
         tambo_nombre_seleccionado = st.sidebar.selectbox("1. Seleccione el Tambo:", mapeo_tambos['Tambo'].tolist())
         tambo_seleccionado = mapeo_tambos[mapeo_tambos['Tambo'] == tambo_nombre_seleccionado]['Num_Tambo'].values[0]
 
-        # Filtrar el dataframe solo para este tambo para ver qué semanas/meses tiene con movimientos
         df_tambo_global = df[df['Num_Tambo'] == str(tambo_seleccionado)]
 
         if tipo_reporte_opcion == "Semanal":
             ciclos_disponibles = df_tambo_global[['Fecha_Cierre_Viernes', 'Ciclo_Semana']].drop_duplicates().sort_values('Fecha_Cierre_Viernes', ascending=False)['Ciclo_Semana'].tolist()
             if not ciclos_disponibles:
-                st.warning("Este tambo no registra movimientos en ninguna semana.")
+                st.warning("⚠️ Este tambo no registra movimientos en ninguna semana de los datos cargados.")
                 st.stop()
                 
             ciclo_seleccionado = st.sidebar.selectbox("2. Seleccione el Cierre de Semana:", ciclos_disponibles)
@@ -576,7 +656,7 @@ try:
             # --- MODO REPORTE MENSUAL ---
             meses_disponibles = sorted(df_tambo_global['AnioMes'].unique(), reverse=True)
             if not meses_disponibles:
-                st.warning("Este tambo no registra movimientos en ningún mes.")
+                st.warning("⚠️ Este tambo no registra movimientos en ningún mes de los datos cargados.")
                 st.stop()
                 
             def formatear_mes_es(periodo):
