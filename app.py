@@ -10,7 +10,7 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 
-st.set_page_config(page_title="Panel de Recolección y Calidad - Coopagro", layout="wide")
+st.set_page_config(page_title="Resumen de Recolección y Calidad - Coopagro", layout="wide")
 
 # --- ESTILOS CSS PROFESIONALES PARA LA INTERFAZ ---
 st.markdown("""
@@ -21,7 +21,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("Panel de recolección y calidad lechera - Coopagro")
+st.title("Panel de Recolección y Calidad Lechera - Coopagro")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE PARA LOS 3 ARCHIVOS ---
 FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
@@ -384,7 +384,8 @@ try:
     df['Fecha_Cierre_Viernes'] = df['Fecha'] + pd.to_timedelta((4 - df['Fecha'].dt.weekday) % 7, unit='D')
     df['Fecha_Inicio_Sabado'] = df['Fecha_Cierre_Viernes'] - pd.Timedelta(days=6)
     df['Ciclo_Semana'] = df.apply(lambda r: f"Viernes {r['Fecha_Cierre_Viernes'].strftime('%d/%m/%Y')} (Sáb {r['Fecha_Inicio_Sabado'].strftime('%d/%m/%Y')} al Vie {r['Fecha_Cierre_Viernes'].strftime('%d/%m/%Y')})", axis=1)
-    
+    df['AnioMes'] = df['Fecha'].dt.to_period('M')
+
     # --- MENÚ LATERAL: NAVEGACIÓN PRINCIPAL ---
     st.sidebar.header("🧭 Navegación")
     vista_principal = st.sidebar.radio("Seleccione la vista:", ["Panel de Control General", "Gestión y Reportes por Tambo"])
@@ -397,20 +398,24 @@ try:
         st.header("📊 Panel de Control General (Gerencial)")
         st.markdown("Vista global del desempeño de recolección y calidad de la cooperativa.")
         
-        df['AnioMes'] = df['Fecha'].dt.to_period('M')
+        st.sidebar.markdown("---")
+        st.sidebar.header("Filtros del Panel General")
         
         if tipo_reporte_opcion == "Semanal":
             ciclos_disponibles = df[['Fecha_Cierre_Viernes', 'Ciclo_Semana']].drop_duplicates().sort_values('Fecha_Cierre_Viernes', ascending=False)['Ciclo_Semana'].tolist()
             if ciclos_disponibles:
-                ciclo_gen = st.selectbox("Seleccione el Cierre de Semana:", ciclos_disponibles)
+                ciclo_gen = st.sidebar.selectbox("Seleccione el Cierre de Semana:", ciclos_disponibles)
                 df_macro = df[df['Ciclo_Semana'] == ciclo_gen]
             else:
-                df_macro = df
+                df_macro = pd.DataFrame()
         else:
             meses_disponibles = sorted(df['AnioMes'].unique(), reverse=True)
             def formatear_mes_es(p): return f"{MESES_ES.get(p.month, p.strftime('%B'))} {p.year}"
-            mes_gen = st.selectbox("Seleccione el Mes:", meses_disponibles, format_func=formatear_mes_es)
-            df_macro = df[df['AnioMes'] == mes_gen]
+            if meses_disponibles:
+                mes_gen = st.sidebar.selectbox("Seleccione el Mes:", meses_disponibles, format_func=formatear_mes_es)
+                df_macro = df[df['AnioMes'] == mes_gen]
+            else:
+                df_macro = pd.DataFrame()
             
         if not df_macro.empty:
             total_coope_litros = df_macro['Litros_Ticket'].sum()
@@ -426,7 +431,7 @@ try:
             mc4.metric("🧈 Grasa Promedio", f"{grasa_coope_prom:.2f}%".replace('.', ',') if pd.notna(grasa_coope_prom) else "S/D")
             
             st.markdown("---")
-            st.subheader("🏆 Ranking de Tambos por Volumen")
+            st.subheader("Ranking de Tambos por Volumen")
             df_ranking = df_macro.groupby(['Tambo', 'Num_Tambo'], as_index=False)['Litros_Ticket'].sum().sort_values(by='Litros_Ticket', ascending=False)
             df_ranking['Litros_Ticket'] = df_ranking['Litros_Ticket'].apply(formato_miles)
             st.dataframe(df_ranking.rename(columns={'Tambo': 'Nombre del Tambo', 'Num_Tambo': 'Código', 'Litros_Ticket': 'Litros Totales'}), hide_index=True, use_container_width=True)
@@ -438,22 +443,26 @@ try:
         st.sidebar.markdown("---")
         st.sidebar.header("Filtros de Tambo")
         
-        if tipo_reporte_opcion == "Semanal":
-            ciclos_disponibles = df[['Fecha_Cierre_Viernes', 'Ciclo_Semana']].drop_duplicates().sort_values('Fecha_Cierre_Viernes', ascending=False)['Ciclo_Semana'].tolist()
-            if not ciclos_disponibles:
-                st.warning("No hay ciclos de semana disponibles en los datos cargados.")
-                st.stop()
-                
-            ciclo_seleccionado = st.sidebar.selectbox("1. Seleccione el Cierre de Semana:", ciclos_disponibles)
-            df_filtrado_periodo = df[df['Ciclo_Semana'] == ciclo_seleccionado]
+        # 1. Primero seleccionamos el tambo para filtrar sus periodos disponibles
+        mapeo_tambos = df[['Tambo', 'Num_Tambo']].dropna().drop_duplicates().sort_values(by='Tambo', ascending=True)
+        if mapeo_tambos.empty:
+            st.warning("No hay tambos en los datos cargados.")
+            st.stop()
             
-            mapeo_tambos = df_filtrado_periodo[['Tambo', 'Num_Tambo']].dropna().drop_duplicates().sort_values(by='Tambo', ascending=True)
-            if mapeo_tambos.empty:
-                st.warning("No hay tambos en este periodo.")
+        tambo_nombre_seleccionado = st.sidebar.selectbox("1. Seleccione el Tambo:", mapeo_tambos['Tambo'].tolist())
+        tambo_seleccionado = mapeo_tambos[mapeo_tambos['Tambo'] == tambo_nombre_seleccionado]['Num_Tambo'].values[0]
+
+        # Filtrar el dataframe solo para este tambo para ver qué semanas/meses tiene con movimientos
+        df_tambo_global = df[df['Num_Tambo'] == str(tambo_seleccionado)]
+
+        if tipo_reporte_opcion == "Semanal":
+            ciclos_disponibles = df_tambo_global[['Fecha_Cierre_Viernes', 'Ciclo_Semana']].drop_duplicates().sort_values('Fecha_Cierre_Viernes', ascending=False)['Ciclo_Semana'].tolist()
+            if not ciclos_disponibles:
+                st.warning("Este tambo no registra movimientos en ninguna semana.")
                 st.stop()
                 
-            tambo_nombre_seleccionado = st.sidebar.selectbox("2. Seleccione el Tambo:", mapeo_tambos['Tambo'].tolist())
-            tambo_seleccionado = mapeo_tambos[mapeo_tambos['Tambo'] == tambo_nombre_seleccionado]['Num_Tambo'].values[0]
+            ciclo_seleccionado = st.sidebar.selectbox("2. Seleccione el Cierre de Semana:", ciclos_disponibles)
+            df_filtrado_periodo = df_tambo_global[df_tambo_global['Ciclo_Semana'] == ciclo_seleccionado]
 
             st.sidebar.markdown("---")
             st.sidebar.subheader("⚙️ Elementos del Reporte")
@@ -466,7 +475,7 @@ try:
             ver_comparacion = st.sidebar.checkbox("Incluir Comparativa vs. Semana Ant.", value=True)
 
             st.divider()
-            df_tambo_periodo = df_filtrado_periodo[df_filtrado_periodo['Num_Tambo'] == str(tambo_seleccionado)].sort_values(['Fecha', 'N_Remito'])
+            df_tambo_periodo = df_filtrado_periodo.sort_values(['Fecha', 'N_Remito'])
             
             if not df_tambo_periodo.empty:
                 f_inicio = df_tambo_periodo['Fecha_Inicio_Sabado'].iloc[0].strftime('%d/%m/%Y')
@@ -491,24 +500,6 @@ try:
                 
                 hay_datos_previos = not df_tambo_anterior.empty
                 
-                # --- SEMÁFOROS DE CALIDAD (SOLO WEB) ---
-                st.markdown("### 🚦 Semáforo de Calidad General")
-                col_sem1, col_sem2 = st.columns(2)
-                
-                if pd.notna(ufc_actual):
-                    if ufc_actual <= 100000: col_sem1.success(f"🟢 UFC Óptima: {formato_miles(ufc_actual)} (< 100k)")
-                    elif ufc_actual <= 200000: col_sem1.warning(f"🟡 UFC Precaución: {formato_miles(ufc_actual)} (< 200k)")
-                    else: col_sem1.error(f"🔴 UFC Alta (Alerta): {formato_miles(ufc_actual)}")
-                else:
-                    col_sem1.info("⚪ UFC sin datos en el periodo")
-
-                if pd.notna(scc_actual):
-                    if scc_actual <= 400000: col_sem2.success(f"🟢 Células Somáticas Óptimas: {formato_miles(scc_actual)} (< 400k)")
-                    else: col_sem2.error(f"🔴 Células Somáticas Altas (Alerta): {formato_miles(scc_actual)}")
-                else:
-                    col_sem2.info("⚪ SCC sin datos en el periodo")
-
-                st.markdown("---")
                 num_metrics = 1 + int(ver_temperatura) + int(ver_grasa) + int(ver_proteina) + int(ver_crioscopia) + int(ver_ufc) + int(ver_scc)
                 c1 = st.columns(num_metrics)
                 col_idx = 0
@@ -583,25 +574,16 @@ try:
 
         else:
             # --- MODO REPORTE MENSUAL ---
-            df['AnioMes'] = df['Fecha'].dt.to_period('M')
-            meses_disponibles = sorted(df['AnioMes'].unique(), reverse=True)
+            meses_disponibles = sorted(df_tambo_global['AnioMes'].unique(), reverse=True)
             if not meses_disponibles:
-                st.warning("No hay meses disponibles en los datos cargados.")
+                st.warning("Este tambo no registra movimientos en ningún mes.")
                 st.stop()
                 
             def formatear_mes_es(periodo):
                 return f"{MESES_ES.get(periodo.month, periodo.strftime('%B'))} {periodo.year}"
 
-            mes_seleccionado = st.sidebar.selectbox("1. Seleccione el Mes:", meses_disponibles, format_func=formatear_mes_es)
-            df_mes_actual = df[df['AnioMes'] == mes_seleccionado]
-            
-            mapeo_tambos = df_mes_actual[['Tambo', 'Num_Tambo']].dropna().drop_duplicates().sort_values(by='Tambo', ascending=True)
-            if mapeo_tambos.empty:
-                st.warning("No hay tambos en este mes.")
-                st.stop()
-                
-            tambo_nombre_seleccionado = st.sidebar.selectbox("2. Seleccione el Tambo:", mapeo_tambos['Tambo'].tolist())
-            tambo_seleccionado = mapeo_tambos[mapeo_tambos['Tambo'] == tambo_nombre_seleccionado]['Num_Tambo'].values[0]
+            mes_seleccionado = st.sidebar.selectbox("2. Seleccione el Mes:", meses_disponibles, format_func=formatear_mes_es)
+            df_tambo_mes = df_tambo_global[df_tambo_global['AnioMes'] == mes_seleccionado].sort_values(['Fecha', 'N_Remito'])
 
             st.sidebar.markdown("---")
             st.sidebar.subheader("⚙️ Elementos del Reporte Mensual")
@@ -613,7 +595,6 @@ try:
             ver_scc = st.sidebar.checkbox("Incluir Células Somáticas (SCC)", value=True)
 
             st.divider()
-            df_tambo_mes = df_mes_actual[df_mes_actual['Num_Tambo'] == str(tambo_seleccionado)].sort_values(['Fecha', 'N_Remito'])
             
             if not df_tambo_mes.empty:
                 nombre_mes_str = formatear_mes_es(mes_seleccionado)
@@ -631,24 +612,6 @@ try:
                 ufc_actual = df_tambo_mes['UFC'].mean() if 'UFC' in df_tambo_mes.columns else float('nan')
                 scc_actual = df_tambo_mes['SCC'].mean() if 'SCC' in df_tambo_mes.columns else float('nan')
                 
-                # --- SEMÁFOROS DE CALIDAD MENSUAL (SOLO WEB) ---
-                st.markdown("### 🚦 Semáforo de Calidad Mensual")
-                col_sem1, col_sem2 = st.columns(2)
-                
-                if pd.notna(ufc_actual):
-                    if ufc_actual <= 100000: col_sem1.success(f"🟢 UFC Promedio Óptima: {formato_miles(ufc_actual)} (< 100k)")
-                    elif ufc_actual <= 200000: col_sem1.warning(f"🟡 UFC Promedio Precaución: {formato_miles(ufc_actual)} (< 200k)")
-                    else: col_sem1.error(f"🔴 UFC Promedio Alta (Alerta): {formato_miles(ufc_actual)}")
-                else:
-                    col_sem1.info("⚪ UFC sin datos en el mes")
-
-                if pd.notna(scc_actual):
-                    if scc_actual <= 400000: col_sem2.success(f"🟢 Células Somáticas Promedio Óptimas: {formato_miles(scc_actual)} (< 400k)")
-                    else: col_sem2.error(f"🔴 Células Somáticas Promedio Altas (Alerta): {formato_miles(scc_actual)}")
-                else:
-                    col_sem2.info("⚪ SCC sin datos en el mes")
-
-                st.markdown("---")
                 num_metrics = 1 + int(ver_temperatura) + int(ver_grasa) + int(ver_proteina) + int(ver_crioscopia) + int(ver_ufc) + int(ver_scc)
                 c1 = st.columns(num_metrics)
                 col_idx = 0
@@ -689,6 +652,7 @@ try:
                 st.subheader("🚀 Envío Masivo de Reportes")
                 if st.button("📤 Enviar Reportes por Mail a TODOS los Tambos del Mes", type="primary"):
                     barra_progreso = st.progress(0)
+                    df_mes_actual = df[df['AnioMes'] == mes_seleccionado]
                     tambos_a_enviar = df_mes_actual[['Num_Tambo', 'Tambo']].drop_duplicates().values
                     total_tambos = len(tambos_a_enviar)
                     enviados_ok = 0
