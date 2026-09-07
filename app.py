@@ -21,7 +21,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🚜 Panel de Recolección y Calidad Lechera - Coopagro")
+st.title("Panel de Recolección y Calidad Lechera - Coopagro")
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE PARA LOS 3 ARCHIVOS ---
 FILE_ID_REMITOS = "16Uh0EwP8tyW79TfJlvcjE8li5Lc6RSLj" 
@@ -496,7 +496,7 @@ try:
             mc4.metric("🧈 Grasa Ponderada", f"{grasa_coope_prom:.2f}%".replace('.', ',') if pd.notna(grasa_coope_prom) else "S/D")
             
             st.markdown("---")
-            st.subheader("🏆 Ranking de Tambos por Volumen")
+            st.subheader("Ranking de Tambos por Volumen")
             df_ranking = df_macro.groupby(['Tambo', 'Num_Tambo'], as_index=False)['Litros_Ticket'].sum().sort_values(by='Litros_Ticket', ascending=False)
             
             # Mostrar tabla en la web
