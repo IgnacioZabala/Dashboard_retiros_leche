@@ -122,13 +122,15 @@ def calcular_promedio_ponderado(df, columna_valor, columna_peso='Litros_Ticket')
     return (df_valido[columna_valor] * df_valido[columna_peso]).sum() / df_valido[columna_peso].sum()
 
 def generar_pdf_panel_general(df_macro, periodo_titulo, total_litros, temp_prom, grasa_prom, prot_prom, ratio_gp, tambos_activos, df_ranking):
-    pdf = FPDF(orientation='L', unit='mm', format='A4')
+    # Formato vertical (Portrait) -> 210 x 297 mm, ancho útil ~190 mm
+    pdf = FPDF(orientation='P', unit='mm', format='A4')
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    usable_width = 267
+    usable_width = 190
     
     ruta_logo = "logo.png"
     if os.path.exists(ruta_logo):
-        pdf.image(ruta_logo, x=108, y=10, w=80)
+        pdf.image(ruta_logo, x=65, y=10, w=80)
         pdf.set_y(52) 
     else:
         pdf.set_y(15)
@@ -138,7 +140,7 @@ def generar_pdf_panel_general(df_macro, periodo_titulo, total_litros, temp_prom,
     pdf.cell(0, 6, 'Informe de Recoleccion - Cooperativa', ln=True, align='C')
     pdf.set_text_color(0, 0, 0) 
     pdf.ln(4)
-    pdf.line(15, pdf.get_y(), 282, pdf.get_y()) 
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y()) 
     pdf.ln(6)
     pdf.set_font('Arial', 'B', 11)
     pdf.cell(0, 7, f'Periodo Evaluado: {periodo_titulo}', ln=True)
@@ -149,7 +151,7 @@ def generar_pdf_panel_general(df_macro, periodo_titulo, total_litros, temp_prom,
     grasa_str = f"{grasa_prom:.2f}%".replace('.', ',') if pd.notna(grasa_prom) else "S/D"
     prot_str = f"{prot_prom:.2f}%".replace('.', ',') if pd.notna(prot_prom) else "S/D"
     
-    pdf.cell(0, 6, f'Temperatura Promedio: {formato_temp(temp_prom)} | Grasa Ponderada: {grasa_str} | Proteina Ponderada: {prot_str}', ln=True)
+    pdf.cell(0, 6, f'Temp. Promedio: {formato_temp(temp_prom)} | Grasa Ponderada: {grasa_str} | Prot. Ponderada: {prot_str}', ln=True)
     pdf.cell(0, 6, f'Ratio Grasa / Proteina: {ratio_str}', ln=True)
     
     pdf.ln(6)
@@ -159,7 +161,7 @@ def generar_pdf_panel_general(df_macro, periodo_titulo, total_litros, temp_prom,
     pdf.set_font('Arial', 'B', 9)
     pdf.set_fill_color(200, 220, 255)
     
-    cols_header = [('Codigo', 40), ('Nombre del Tambo', 137), ('Litros Totales', 90)]
+    cols_header = [('Codigo', 30), ('Nombre del Tambo', 100), ('Litros Totales', 60)]
     for i, (col_name, col_w) in enumerate(cols_header):
         is_last = (i == len(cols_header) - 1)
         pdf.cell(col_w, 8, col_name, 1, 1 if is_last else 0, 'C', fill=True)
@@ -178,13 +180,15 @@ def generar_pdf_panel_general(df_macro, periodo_titulo, total_litros, temp_prom,
     return bytes(pdf.output(dest='S'), encoding='latin-1')
 
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_litros, comp_temp, mostrar_temp, mostrar_grasa, mostrar_prot, mostrar_crios, mostrar_ufc, mostrar_scc, mostrar_comp, hay_datos_previos, es_mensual=False):
-    pdf = FPDF(orientation='L', unit='mm', format='A4')
+    # Formato vertical (Portrait) -> 210 x 297 mm, ancho útil ~190 mm
+    pdf = FPDF(orientation='P', unit='mm', format='A4')
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    usable_width = 267
+    usable_width = 190
     
     ruta_logo = "logo.png"
     if os.path.exists(ruta_logo):
-        pdf.image(ruta_logo, x=108, y=10, w=80)
+        pdf.image(ruta_logo, x=65, y=10, w=80)
         pdf.set_y(52) 
     else:
         pdf.set_y(15)
@@ -195,7 +199,7 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_
     pdf.cell(0, 6, titulo_reporte, ln=True, align='C')
     pdf.set_text_color(0, 0, 0) 
     pdf.ln(4)
-    pdf.line(15, pdf.get_y(), 282, pdf.get_y()) 
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y()) 
     pdf.ln(6)
     pdf.set_font('Arial', 'B', 11)
     pdf.cell(0, 7, f'Productor: {tambo_nombre} (Codigo #{tambo_id})', ln=True)
@@ -228,22 +232,23 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_
     if mostrar_prot and pd.notna(proteina_prom): partes_solidos.append(f"Proteina: {proteina_prom:.2f}%".replace('.', ','))
     if mostrar_crios and pd.notna(crios_prom): partes_solidos.append(f"Crioscopia: {crios_prom:.3f}".replace('.', ','))
     if mostrar_ufc and pd.notna(ufc_prom): partes_solidos.append(f"UFC: {formato_miles(ufc_prom)}")
-    if mostrar_scc and pd.notna(scc_prom): partes_solidos.append(f"Células Somáticas: {formato_miles(scc_prom)}")
+    if mostrar_scc and pd.notna(scc_prom): partes_solidos.append(f"SCC: {formato_miles(scc_prom)}")
         
     if partes_solidos:
         pdf.cell(0, 6, f"Promedios Lab -> {' | '.join(partes_solidos)}", ln=True)
     
     pdf.ln(6)
-    pdf.set_font('Arial', 'B', 9)
+    pdf.set_font('Arial', 'B', 8)
     pdf.set_fill_color(200, 220, 255)
     
-    cols_header = [('Fecha', 35), ('N° de remito', 50), ('Litros', 35)]
-    if mostrar_temp: cols_header.append(('Temp', 25))
-    if mostrar_grasa: cols_header.append(('Grasa', 30))
-    if mostrar_prot: cols_header.append(('Proteína', 30))
-    if mostrar_crios: cols_header.append(('Crioscopia', 35))
-    if mostrar_ufc: cols_header.append(('UFC', 30))
-    if mostrar_scc: cols_header.append(('Células Somáticas', 37))
+    # Definir anchos dinámicos según las columnas activas para que entren perfectamente en los 190mm verticales
+    cols_header = [('Fecha', 26), ('N° remito', 34), ('Litros', 30)]
+    if mostrar_temp: cols_header.append(('Temp', 18))
+    if mostrar_grasa: cols_header.append(('Grasa', 20))
+    if mostrar_prot: cols_header.append(('Prot', 20))
+    if mostrar_crios: cols_header.append(('Crios', 22))
+    if mostrar_ufc: cols_header.append(('UFC', 22))
+    if mostrar_scc: cols_header.append(('SCC', 24))
         
     suma_anchos = sum([w for _, w in cols_header])
     factor_escala = usable_width / suma_anchos
@@ -253,7 +258,7 @@ def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_
         is_last = (i == len(cols_header_ajustado) - 1)
         pdf.cell(col_w, 8, col_name, 1, 1 if is_last else 0, 'C', fill=True)
     
-    pdf.set_font('Arial', '', 9)
+    pdf.set_font('Arial', '', 8)
     for _, row in df_productor.iterrows():
         fecha_str = row['Fecha'].strftime('%d/%m/%Y') if pd.notna(row['Fecha']) else ''
         remito = str(row['N_Remito']) if pd.notna(row['N_Remito']) else '-'
