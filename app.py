@@ -395,7 +395,7 @@ try:
     tipo_reporte_opcion = st.sidebar.radio("Seleccione el periodo:", ["Semanal", "Mensual"])
 
     if vista_principal == "Panel de Control General":
-        st.header("📊 Panel de Control General (Gerencial)")
+        st.header("📊 Panel de Control General")
         st.markdown("Vista global del desempeño de recolección y calidad de la cooperativa.")
         
         st.sidebar.markdown("---")
