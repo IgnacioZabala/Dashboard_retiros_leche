@@ -453,7 +453,7 @@ try:
     tipo_reporte_opcion = st.sidebar.radio("Seleccione el periodo:", ["Semanal", "Mensual"])
 
     if vista_principal == "Panel de Control General":
-        st.header("📊 Panel de Control General (Gerencial)")
+        st.header("📊 Panel de Control General")
         st.markdown("Vista global del desempeño de recolección y calidad de la cooperativa.")
         
         st.sidebar.markdown("---")
@@ -512,7 +512,7 @@ try:
             )
             nombre_pdf_gerencial = f"Informe_Gerencial_Cooperativa_{periodo_texto_gerencial.replace(' ', '_').replace('/', '-')}.pdf"
             st.download_button(
-                label="📥 Descargar Informe Gerencial en PDF", 
+                label="📥 Descargar Informe en PDF", 
                 data=pdf_gerencial_bytes, 
                 file_name=nombre_pdf_gerencial, 
                 mime="application/pdf"
