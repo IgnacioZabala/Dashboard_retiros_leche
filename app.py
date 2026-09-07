@@ -121,7 +121,7 @@ def calcular_promedio_ponderado(df, columna_valor, columna_peso='Litros_Ticket')
         return float('nan')
     return (df_valido[columna_valor] * df_valido[columna_peso]).sum() / df_valido[columna_peso].sum()
 
-def generar_pdf_panel_general(df_macro, periodo_titulo, total_litros, temp_prom, grasa_prom, prot_prom, tambos_activos, df_ranking):
+def generar_pdf_panel_general(df_macro, periodo_titulo, total_litros, temp_prom, grasa_prom, prot_prom, ratio_gp, tambos_activos, df_ranking):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     usable_width = 267
@@ -135,7 +135,7 @@ def generar_pdf_panel_general(df_macro, periodo_titulo, total_litros, temp_prom,
     
     pdf.set_font('Arial', 'B', 12)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, 'Informe Gerencial de Recoleccion - Cooperativa', ln=True, align='C')
+    pdf.cell(0, 6, 'Informe de Recoleccion - Cooperativa', ln=True, align='C')
     pdf.set_text_color(0, 0, 0) 
     pdf.ln(4)
     pdf.line(15, pdf.get_y(), 282, pdf.get_y()) 
@@ -144,7 +144,13 @@ def generar_pdf_panel_general(df_macro, periodo_titulo, total_litros, temp_prom,
     pdf.cell(0, 7, f'Periodo Evaluado: {periodo_titulo}', ln=True)
     pdf.set_font('Arial', '', 10)
     pdf.cell(0, 6, f'Tambos Activos: {tambos_activos} | Litros Totales: {formato_miles(total_litros)} L', ln=True)
-    pdf.cell(0, 6, f'Temperatura Promedio: {formato_temp(temp_prom)} | Grasa Ponderada: {grasa_prom:.2f}%'.replace('.', ','), ln=True)
+    
+    ratio_str = f"{ratio_gp:.2f}".replace('.', ',') if pd.notna(ratio_gp) else "S/D"
+    grasa_str = f"{grasa_prom:.2f}%".replace('.', ',') if pd.notna(grasa_prom) else "S/D"
+    prot_str = f"{prot_prom:.2f}%".replace('.', ',') if pd.notna(prot_prom) else "S/D"
+    
+    pdf.cell(0, 6, f'Temperatura Promedio: {formato_temp(temp_prom)} | Grasa Ponderada: {grasa_str} | Proteina Ponderada: {prot_str}', ln=True)
+    pdf.cell(0, 6, f'Ratio Grasa / Proteina: {ratio_str}', ln=True)
     
     pdf.ln(6)
     pdf.set_font('Arial', 'B', 11)
@@ -483,34 +489,33 @@ try:
             total_coope_litros = df_macro['Litros_Ticket'].sum()
             temp_coope_prom = df_macro['Temperatura'].mean()
             
-            # --- CÁLCULO DE GRASA Y PROTEÍNA PONDERADA POR LITROS ---
             grasa_coope_prom = calcular_promedio_ponderado(df_macro, 'Grasa', 'Litros_Ticket')
             prot_coope_prom = calcular_promedio_ponderado(df_macro, 'Proteina', 'Litros_Ticket')
+            ratio_gp = (grasa_coope_prom / prot_coope_prom) if (pd.notna(grasa_coope_prom) and pd.notna(prot_coope_prom) and prot_coope_prom > 0) else float('nan')
             
             tambos_activos = df_macro['Num_Tambo'].nunique()
             
-            mc1, mc2, mc3, mc4 = st.columns(4)
-            mc1.metric("🥛 Litros Totales Coope", f"{formato_miles(total_coope_litros)} L")
-            mc2.metric("🌡️ Temperatura Media", formato_temp(temp_coope_prom))
-            mc3.metric("🐄 Tambos Activos", f"{tambos_activos}")
-            mc4.metric("🧈 Grasa Ponderada", f"{grasa_coope_prom:.2f}%".replace('.', ',') if pd.notna(grasa_coope_prom) else "S/D")
+            mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+            mc1.metric("🥛 Litros Totales", f"{formato_miles(total_coope_litros)} L")
+            mc2.metric("🌡️ Temp. Media", formato_temp(temp_coope_prom))
+            mc3.metric("🧈 Grasa Ponderada", f"{grasa_coope_prom:.2f}%".replace('.', ',') if pd.notna(grasa_coope_prom) else "S/D")
+            mc4.metric("🧀 Proteína Ponderada", f"{prot_coope_prom:.2f}%".replace('.', ',') if pd.notna(prot_coope_prom) else "S/D")
+            mc5.metric("⚖️ Ratio Grasa/Prot.", f"{ratio_gp:.2f}".replace('.', ',') if pd.notna(ratio_gp) else "S/D")
             
             st.markdown("---")
             st.subheader("Ranking de Tambos por Volumen")
             df_ranking = df_macro.groupby(['Tambo', 'Num_Tambo'], as_index=False)['Litros_Ticket'].sum().sort_values(by='Litros_Ticket', ascending=False)
             
-            # Mostrar tabla en la web
             df_ranking_show = df_ranking.copy()
             df_ranking_show['Litros_Ticket'] = df_ranking_show['Litros_Ticket'].apply(formato_miles)
             st.dataframe(df_ranking_show.rename(columns={'Tambo': 'Nombre del Tambo', 'Num_Tambo': 'Código', 'Litros_Ticket': 'Litros Totales'}), hide_index=True, use_container_width=True)
             
-            # --- BOTÓN PARA DESCARGAR EL INFORME GERENCIAL EN PDF ---
             st.markdown("---")
             pdf_gerencial_bytes = generar_pdf_panel_general(
                 df_macro, periodo_texto_gerencial, total_coope_litros, temp_coope_prom, 
-                grasa_coope_prom, prot_coope_prom, tambos_activos, df_ranking
+                grasa_coope_prom, prot_coope_prom, ratio_gp, tambos_activos, df_ranking
             )
-            nombre_pdf_gerencial = f"Informe_Gerencial_Cooperativa_{periodo_texto_gerencial.replace(' ', '_').replace('/', '-')}.pdf"
+            nombre_pdf_gerencial = f"Informe_Cooperativa_{periodo_texto_gerencial.replace(' ', '_').replace('/', '-')}.pdf"
             st.download_button(
                 label="📥 Descargar Informe en PDF", 
                 data=pdf_gerencial_bytes, 
