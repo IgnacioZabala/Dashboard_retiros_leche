@@ -52,8 +52,16 @@ def cargar_datos_drive(u_remitos, u_lab, u_bacsomatic):
     df_remitos_raw, df_contactos, df_lab, df_bacsomatic = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     
     try:
-        df_remitos_raw = pd.read_excel(u_remitos, sheet_name='Résumen OD-PRO-03', skiprows=4, usecols="B:K")
-        df_contactos = pd.read_excel(u_remitos, sheet_name='Código Tambos')
+        xls_remitos = pd.ExcelFile(u_remitos)
+        sheet_remitos = next((s for s in xls_remitos.sheet_names if 'od-pro-03' in s.lower()), xls_remitos.sheet_names[0])
+        # Búsqueda tolerante a tildes/mayúsculas para la pestaña de códigos
+        sheet_contactos = next((s for s in xls_remitos.sheet_names if 'codigo tambo' in s.lower().replace('ó', 'o')), None)
+        
+        df_remitos_raw = pd.read_excel(u_remitos, sheet_name=sheet_remitos, skiprows=4, usecols="B:K")
+        if sheet_contactos:
+            df_contactos = pd.read_excel(u_remitos, sheet_name=sheet_contactos)
+        else:
+            st.sidebar.warning("No se encontró la pestaña de Códigos de Tambos.")
     except Exception as e:
         st.sidebar.warning(f"Error cargando remitos/contactos: {e}")
         
@@ -85,7 +93,10 @@ def limpiar_tambo(val) -> str:
     if pd.isna(val): return ""
     s = str(val).strip().upper()
     if s.endswith('.0'): s = s[:-2]
-    return f"T{s}" if s.isdigit() else s
+    # Si comienza con número (ej: "13", "16-1"), le anteponemos la "T"
+    if s and s[0].isdigit():
+        return f"T{s}"
+    return s
 
 def extraer_fecha_texto(texto) -> pd.Timestamp:
     if pd.isna(texto): return pd.NaT
@@ -152,7 +163,6 @@ def generar_pdf_base(titulo: str, subtitulo: str, metricas: list, headers: list,
     for row in df_datos.itertuples(index=False):
         for i, (fn_mapeo, (_, col_w)) in enumerate(zip(filas_mapeo, headers_ajustados)):
             val = fn_mapeo(row)
-            # Alinear a la izquierda solo para nombres largos (índice 1 en ranking)
             align = 'L' if "Nombre" in headers_ajustados[i][0] else 'C'
             pdf.cell(col_w, 7, str(val), 1, 1 if i == len(headers_ajustados) - 1 else 0, align)
             
@@ -262,19 +272,31 @@ try:
         st.error("El archivo de remitos está vacío o no se pudo acceder.")
         st.stop()
 
-    # Vectorización de limpieza de contactos
+    # Procesamiento robusto de contactos adaptado a tu estructura de columnas
     df_contactos = pd.DataFrame()
     if not df_contactos_raw.empty:
         df_c_temp = df_contactos_raw.copy()
-        df_c_temp.columns = df_c_temp.columns.astype(str).str.strip().str.lower()
+        df_c_temp.columns = df_c_temp.columns.astype(str).str.strip().str.lower().str.replace('ó', 'o')
         
-        col_codigo = next((c for c in df_c_temp.columns if ('código' in c or 'codigo' in c) and 'viejo' not in c), df_c_temp.columns[0])
-        col_contacto = next((c for c in df_c_temp.columns if 'contacto' in c or 'nombre' in c), df_c_temp.columns[min(2, len(df_c_temp.columns)-1)])
-        col_email = next((c for c in df_c_temp.columns if 'email' in c or 'correo' in c), df_c_temp.columns[-1])
-        
-        df_contactos['Num_Tambo'] = df_c_temp[col_codigo].apply(limpiar_tambo)
-        df_contactos['Contacto_Nombre'] = df_c_temp[col_contacto]
-        df_contactos['Email'] = df_c_temp[col_email]
+        # 1. Buscar columna de Código (excluyendo "codigo viejo")
+        col_codigo = next((c for c in df_c_temp.columns if 'codigo' in c and 'viejo' not in c), None)
+        if not col_codigo and len(df_c_temp.columns) > 1: 
+            col_codigo = df_c_temp.columns[1]
+            
+        # 2. Buscar columna de Contacto/Nombre
+        col_contacto = next((c for c in df_c_temp.columns if 'contacto' in c or 'nombre' in c), None)
+        if not col_contacto and len(df_c_temp.columns) > 3: 
+            col_contacto = df_c_temp.columns[3]
+            
+        # 3. Buscar columna de Email
+        col_email = next((c for c in df_c_temp.columns if 'email' in c or 'correo' in c), None)
+        if not col_email and len(df_c_temp.columns) > 4: 
+            col_email = df_c_temp.columns[4]
+            
+        if col_codigo is not None and col_contacto is not None and col_email is not None:
+            df_contactos['Num_Tambo'] = df_c_temp[col_codigo].apply(limpiar_tambo)
+            df_contactos['Contacto_Nombre'] = df_c_temp[col_contacto]
+            df_contactos['Email'] = df_c_temp[col_email]
 
     # Preparación de DataFrame Base
     df = df_raw.iloc[:, :10].copy()
@@ -296,13 +318,11 @@ try:
         col_sample = next((c for c in df_lab.columns if any(x in c.lower() for x in ['sample', 'number', 'tambo', 'muestra'])), df_lab.columns[0])
         col_date = next((c for c in df_lab.columns if any(x in c.lower() for x in ['fecha', 'date', 'time'])), None)
         
-        # Limpieza de tambos vectorizada
         df_lab['Num_Tambo'] = df_lab[col_sample].astype(str).str.split().str[0].apply(limpiar_tambo)
         
         if col_date and df_lab[col_date].notna().any():
             df_lab['Fecha'] = pd.to_datetime(df_lab[col_date], errors='coerce').dt.normalize()
         else:
-            # Fallback a extracción de texto optimizada
             df_lab['Fecha'] = df_lab[col_sample].apply(lambda x: extraer_fecha_texto(x) if pd.notna(x) else pd.NaT)
             
         df_lab = df_lab.dropna(subset=['Fecha', 'Num_Tambo']).sort_values(by=['Num_Tambo', 'Fecha'])
@@ -451,7 +471,6 @@ try:
             l_act = df_per['Litros_Ticket'].sum()
             comp_l, comp_t = "", ""
             
-            # Comparativa solo si es semanal
             if not es_mensual and st.sidebar.checkbox("Comparativa vs Ant.", True):
                 f_ant = df_per['Fecha_Cierre_Viernes'].iloc[0] - pd.Timedelta(days=7)
                 df_ant = df[(df['Num_Tambo'] == str(t_id)) & (df['Fecha_Cierre_Viernes'] == f_ant)]
@@ -470,7 +489,6 @@ try:
             if v_ufc: cols[idx].metric("UFC", formato_miles(df_per['UFC'].mean()) if pd.notna(df_per['UFC'].mean()) else "S/D"); idx += 1
             if v_scc: cols[idx].metric("SCC", formato_miles(df_per['SCC'].mean()) if pd.notna(df_per['SCC'].mean()) else "S/D")
 
-            # Armado explícito de columnas para evitar problemas de mayúsculas/minúsculas
             cols_show = ['Fecha', 'N_Remito', 'Litros_Ticket']
             if v_temp: cols_show.append('Temperatura')
             if v_grasa: cols_show.append('Grasa')
@@ -483,7 +501,6 @@ try:
             df_disp['Fecha'] = df_disp['Fecha'].dt.strftime('%d/%m/%Y')
             df_disp['Litros_Ticket'] = df_disp['Litros_Ticket'].apply(formato_miles)
             
-            # Aplicación de formatos usando los nombres correctos
             if v_temp: df_disp['Temperatura'] = df_disp['Temperatura'].apply(formato_temp)
             if v_grasa: df_disp['Grasa'] = df_disp['Grasa'].apply(lambda x: f"{x:.2f}%".replace('.', ',') if pd.notna(x) else '-')
             if v_prot: df_disp['Proteina'] = df_disp['Proteina'].apply(lambda x: f"{x:.2f}%".replace('.', ',') if pd.notna(x) else '-')
