@@ -470,20 +470,26 @@ try:
             if v_ufc: cols[idx].metric("UFC", formato_miles(df_per['UFC'].mean()) if pd.notna(df_per['UFC'].mean()) else "S/D"); idx += 1
             if v_scc: cols[idx].metric("SCC", formato_miles(df_per['SCC'].mean()) if pd.notna(df_per['SCC'].mean()) else "S/D")
 
-            cols_show = ['Fecha', 'N_Remito', 'Litros_Ticket'] + [k.capitalize() for k, v in args_vis.items() if v and k not in ['temp', 'prot', 'crios']]
-            if v_temp: cols_show.insert(3, 'Temperatura')
-            if v_prot: cols_show.insert(5, 'Proteina')
-            if v_crios: cols_show.insert(6, 'Crioscopia')
+            # Armado explícito de columnas para evitar problemas de mayúsculas/minúsculas
+            cols_show = ['Fecha', 'N_Remito', 'Litros_Ticket']
+            if v_temp: cols_show.append('Temperatura')
+            if v_grasa: cols_show.append('Grasa')
+            if v_prot: cols_show.append('Proteina')
+            if v_crios: cols_show.append('Crioscopia')
+            if v_ufc: cols_show.append('UFC')
+            if v_scc: cols_show.append('SCC')
 
             df_disp = df_per[cols_show].copy()
             df_disp['Fecha'] = df_disp['Fecha'].dt.strftime('%d/%m/%Y')
             df_disp['Litros_Ticket'] = df_disp['Litros_Ticket'].apply(formato_miles)
+            
+            # Aplicación de formatos usando los nombres correctos
             if v_temp: df_disp['Temperatura'] = df_disp['Temperatura'].apply(formato_temp)
             if v_grasa: df_disp['Grasa'] = df_disp['Grasa'].apply(lambda x: f"{x:.2f}%".replace('.', ',') if pd.notna(x) else '-')
             if v_prot: df_disp['Proteina'] = df_disp['Proteina'].apply(lambda x: f"{x:.2f}%".replace('.', ',') if pd.notna(x) else '-')
             if v_crios: df_disp['Crioscopia'] = df_disp['Crioscopia'].apply(lambda x: f"{x:.3f}".replace('.', ',') if pd.notna(x) else '-')
-            if v_ufc: df_disp['Ufc'] = df_disp['Ufc'].apply(lambda x: formato_miles(x) if pd.notna(x) else '-')
-            if v_scc: df_disp['Scc'] = df_disp['Scc'].apply(lambda x: formato_miles(x) if pd.notna(x) else '-')
+            if v_ufc: df_disp['UFC'] = df_disp['UFC'].apply(lambda x: formato_miles(x) if pd.notna(x) else '-')
+            if v_scc: df_disp['SCC'] = df_disp['SCC'].apply(lambda x: formato_miles(x) if pd.notna(x) else '-')
             
             st.dataframe(df_disp.rename(columns={'Litros_Ticket': 'Litros', 'N_Remito': 'N° Remito', 'Temperatura': 'Temp'}), hide_index=True, use_container_width=True)
 
