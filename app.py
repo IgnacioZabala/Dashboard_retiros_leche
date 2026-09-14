@@ -35,12 +35,10 @@ MESES_ES = {
     7: 'Julio', 8: 'Agosto', 9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
 }
 
-# Precompilación de expresiones regulares para mayor velocidad
 REGEX_COMPACTO = re.compile(r'(\d{2})(\d{2})(\d{4})')
 REGEX_FECHA = re.compile(r'(\d{2})[-/]?(\d{2})[-/]?(\d{4})')
 
 def encontrar_fila_encabezado(df_temp: pd.DataFrame, palabras_clave: list) -> int:
-    """Busca eficientemente la fila de encabezados en las primeras 20 filas."""
     for row in df_temp.head(20).itertuples(index=True, name=None):
         row_str = " ".join([str(x).lower() for x in row[1:] if pd.notna(x)])
         if any(kw in row_str for kw in palabras_clave):
@@ -54,7 +52,6 @@ def cargar_datos_drive(u_remitos, u_lab, u_bacsomatic):
     try:
         xls_remitos = pd.ExcelFile(u_remitos)
         sheet_remitos = next((s for s in xls_remitos.sheet_names if 'od-pro-03' in s.lower()), xls_remitos.sheet_names[0])
-        # Búsqueda tolerante a tildes/mayúsculas para la pestaña de códigos
         sheet_contactos = next((s for s in xls_remitos.sheet_names if 'codigo tambo' in s.lower().replace('ó', 'o')), None)
         
         df_remitos_raw = pd.read_excel(u_remitos, sheet_name=sheet_remitos, skiprows=4, usecols="B:K")
@@ -93,7 +90,6 @@ def limpiar_tambo(val) -> str:
     if pd.isna(val): return ""
     s = str(val).strip().upper()
     if s.endswith('.0'): s = s[:-2]
-    # Si comienza con número (ej: "13", "16-1"), le anteponemos la "T"
     if s and s[0].isdigit():
         return f"T{s}"
     return s
@@ -272,23 +268,19 @@ try:
         st.error("El archivo de remitos está vacío o no se pudo acceder.")
         st.stop()
 
-    # Procesamiento robusto de contactos adaptado a tu estructura de columnas
     df_contactos = pd.DataFrame()
     if not df_contactos_raw.empty:
         df_c_temp = df_contactos_raw.copy()
         df_c_temp.columns = df_c_temp.columns.astype(str).str.strip().str.lower().str.replace('ó', 'o')
         
-        # 1. Buscar columna de Código (excluyendo "codigo viejo")
         col_codigo = next((c for c in df_c_temp.columns if 'codigo' in c and 'viejo' not in c), None)
         if not col_codigo and len(df_c_temp.columns) > 1: 
             col_codigo = df_c_temp.columns[1]
             
-        # 2. Buscar columna de Contacto/Nombre
         col_contacto = next((c for c in df_c_temp.columns if 'contacto' in c or 'nombre' in c), None)
         if not col_contacto and len(df_c_temp.columns) > 3: 
             col_contacto = df_c_temp.columns[3]
             
-        # 3. Buscar columna de Email
         col_email = next((c for c in df_c_temp.columns if 'email' in c or 'correo' in c), None)
         if not col_email and len(df_c_temp.columns) > 4: 
             col_email = df_c_temp.columns[4]
@@ -298,7 +290,6 @@ try:
             df_contactos['Contacto_Nombre'] = df_c_temp[col_contacto]
             df_contactos['Email'] = df_c_temp[col_email]
 
-    # Preparación de DataFrame Base
     df = df_raw.iloc[:, :10].copy()
     df.columns = ['Fecha', 'N_Remito', 'Num_Tambo', 'Tambo', 'Litros_Ticket', 'Litros_Planilla', 'Diferencia', 'Temperatura', 'Grasa', 'Proteina']
     df['Num_Tambo'] = df['Num_Tambo'].apply(limpiar_tambo)
@@ -382,19 +373,19 @@ try:
 
     # --- INTERFAZ STREAMLIT ---
     st.sidebar.header("🧭 Navegación")
-    vista_principal = st.sidebar.radio("Seleccione la vista:", ["Panel de Control General", "Gestión y Reportes por Tambo"])
+    vista_principal = st.sidebar.radio("Seleccione la vista:", ["Panel de Control General", "Gestión y Reportes por Tambo", "Envío Masivo Semanal"])
 
     st.sidebar.markdown("---")
-    st.sidebar.header("Modalidad de Periodo")
-    tipo_reporte_opcion = st.sidebar.radio("Seleccione el periodo:", ["Semanal", "Mensual"])
-
+    
     if vista_principal == "Panel de Control General":
+        st.sidebar.header("Modalidad de Periodo")
+        tipo_reporte_opcion = st.sidebar.radio("Seleccione el periodo:", ["Semanal", "Mensual"])
         st.header("📊 Panel de Control General")
         
         if tipo_reporte_opcion == "Semanal":
-            ciclos = df['Ciclo_Semana'].drop_duplicates().tolist()
+            ciclos = df[['Fecha_Cierre_Viernes', 'Ciclo_Semana']].drop_duplicates().sort_values('Fecha_Cierre_Viernes', ascending=False)['Ciclo_Semana'].tolist()
             if ciclos:
-                ciclo_gen = st.sidebar.selectbox("Seleccione el Cierre de Semana:", ciclos)
+                ciclo_gen = st.sidebar.selectbox("Seleccione el Cierre de Semana:", ciclos, index=0)
                 df_macro = df[df['Ciclo_Semana'] == ciclo_gen]
                 periodo_texto = ciclo_gen
             else: df_macro, periodo_texto = pd.DataFrame(), ""
@@ -429,7 +420,10 @@ try:
         else:
             st.info("No hay datos para el periodo seleccionado.")
 
-    else:
+    elif vista_principal == "Gestión y Reportes por Tambo":
+        st.sidebar.header("Modalidad de Periodo")
+        tipo_reporte_opcion = st.sidebar.radio("Seleccione el periodo:", ["Semanal", "Mensual"])
+        
         mapeo_tambos = df[['Tambo', 'Num_Tambo']].drop_duplicates().sort_values('Tambo')
         if mapeo_tambos.empty: st.stop()
             
@@ -438,9 +432,9 @@ try:
         df_t = df[df['Num_Tambo'] == str(t_id)]
 
         if tipo_reporte_opcion == "Semanal":
-            ciclos = df_t['Ciclo_Semana'].drop_duplicates().tolist()
+            ciclos = df_t[['Fecha_Cierre_Viernes', 'Ciclo_Semana']].drop_duplicates().sort_values('Fecha_Cierre_Viernes', ascending=False)['Ciclo_Semana'].tolist()
             if not ciclos: st.stop()
-            ciclo_sel = st.sidebar.selectbox("2. Cierre de Semana:", ciclos)
+            ciclo_sel = st.sidebar.selectbox("2. Cierre de Semana:", ciclos, index=0)
             df_per = df_t[df_t['Ciclo_Semana'] == ciclo_sel].sort_values(['Fecha', 'N_Remito'])
             es_mensual = False
             periodo_pdf = f"{df_per['Fecha_Inicio_Sabado'].iloc[0]:%d/%m/%Y} al {df_per['Fecha_Cierre_Viernes'].iloc[0]:%d/%m/%Y}" if not df_per.empty else ""
@@ -537,6 +531,100 @@ try:
                             if enviar_correo_productor(em, nc, tnom, pdf_loop, f"Resumen_{tnom.replace(' ', '_')}.pdf", "mensual"): env_ok += 1
                         bar.progress((i + 1) / len(t_unicos))
                     st.success(f"Proceso finalizado: {env_ok} correos enviados.")
+
+    elif vista_principal == "Envío Masivo Semanal":
+        st.header("📤 Envío Masivo y Control de Reportes Semanales")
+        st.markdown("Revisá los datos de la semana seleccionada antes de realizar el envío masivo por correo.")
+        
+        ciclos_disponibles = df[['Fecha_Cierre_Viernes', 'Ciclo_Semana']].drop_duplicates().sort_values('Fecha_Cierre_Viernes', ascending=False)['Ciclo_Semana'].tolist()
+        
+        if not ciclos_disponibles:
+            st.warning("No hay semanas registradas en los datos.")
+            st.stop()
+            
+        # Por defecto toma el índice 0, que corresponde a la última semana (más reciente) debido al sort_values descendente
+        ciclo_masivo = st.selectbox("Seleccione el Cierre de Semana a procesar (por defecto la más reciente):", ciclos_disponibles, index=0)
+        
+        df_semana_macro = df[df['Ciclo_Semana'] == ciclo_masivo]
+        
+        if df_semana_macro.empty:
+            st.info("No hay datos de recolección para la semana seleccionada.")
+        else:
+            # Construir tabla de previsualización para auditoría previa al envío
+            tramos_agrupados = df_semana_macro.groupby(['Num_Tambo', 'Tambo'], as_index=False).agg(
+                Litros_Totales=('Litros_Ticket', 'sum'),
+                Remitos_Count=('N_Remito', 'count'),
+                Temp_Media=('Temperatura', 'mean'),
+                Grasa_Prom=('Grasa', 'mean'),
+                Proteina_Prom=('Proteina', 'mean')
+            )
+            
+            # Combinar con información de contactos y emails
+            df_preview = pd.merge(tramos_agrupados, df_contactos, on='Num_Tambo', how='left')
+            
+            # Detección temprana de anomalías / datos erróneos para alertar visualmente
+            def detectar_anomalias(row):
+                alertas = []
+                if pd.isna(row['Email']) or not str(row['Email']).strip():
+                    alertas.append("⚠️ Falta Email")
+                if row['Temp_Media'] > 10.0:
+                    alertas.append("🚨 Temp Alta (>10°C)")
+                if row['Litros_Totales'] <= 0:
+                    alertas.append("❌ Litros en 0 o negativos")
+                if pd.notna(row['Grasa_Prom']) and (row['Grasa_Prom'] < 2.0 or row['Grasa_Prom'] > 6.5):
+                    alertas.append("⚠️ Grasa Atípica")
+                return " | ".join(alertas) if alertas else "✅ OK"
+
+            df_preview['Estado / Alerta'] = df_preview.apply(detectar_anomalias, axis=1)
+            
+            # Ordenar columnas para la tabla de control
+            df_table_show = df_preview[['Num_Tambo', 'Tambo', 'Contacto_Nombre', 'Email', 'Litros_Totales', 'Remitos_Count', 'Temp_Media', 'Estado / Alerta']].copy()
+            df_table_show['Litros_Totales'] = df_table_show['Litros_Totales'].apply(formato_miles)
+            df_table_show['Temp_Media'] = df_table_show['Temp_Media'].apply(formato_temp)
+            
+            st.subheader("📋 Previsualización y Auditoría de Datos por Tambo")
+            st.dataframe(
+                df_table_show.rename(columns={
+                    'Num_Tambo': 'Código',
+                    'Tambo': 'Tambo',
+                    'Contacto_Nombre': 'Productor',
+                    'Email': 'Correo Electrónico',
+                    'Litros_Totales': 'Litros',
+                    'Remitos_Count': 'Remitos',
+                    'Temp_Media': 'Temp. Prom'
+                }), 
+                hide_index=True, 
+                use_container_width=True
+            )
+            
+            periodo_pdf_str = f"{df_semana_macro['Fecha_Inicio_Sabado'].iloc[0]:%d/%m/%Y} al {df_semana_macro['Fecha_Cierre_Viernes'].iloc[0]:%d/%m/%Y}"
+            
+            st.markdown("---")
+            if st.button("🚀 Confirmar y Enviar Correos Masivos de esta Semana", type="primary"):
+                barra = st.progress(0)
+                tambos_a_procesar = df_semana_macro['Num_Tambo'].unique()
+                total_t = len(tambos_a_procesar)
+                enviados_count = 0
+                
+                args_vis_default = {'temp': True, 'grasa': True, 'prot': True, 'crios': True, 'ufc': True, 'scc': True}
+                
+                for idx, t_id_loop in enumerate(tambos_a_procesar):
+                    info_row = df_contactos[df_contactos['Num_Tambo'] == str(t_id_loop)]
+                    email_dest = info_row['Email'].values[0] if not info_row.empty and pd.notna(info_row['Email'].values[0]) else ""
+                    nombre_prod = info_row['Contacto_Nombre'].values[0] if not info_row.empty and pd.notna(info_row['Contacto_Nombre'].values[0]) else "Productor"
+                    tambo_nom_real = df_semana_macro[df_semana_macro['Num_Tambo'] == str(t_id_loop)]['Tambo'].iloc[0]
+                    
+                    if email_dest and "@" in str(email_dest):
+                        df_t_loop = df_semana_macro[df_semana_macro['Num_Tambo'] == str(t_id_loop)].sort_values(['Fecha', 'N_Remito'])
+                        pdf_bytes_loop = generar_pdf_bytes(df_t_loop, tambo_nom_real, t_id_loop, periodo_pdf_str, "", "", args_vis_default, es_mensual=False)
+                        nom_archivo_pdf = f"Resumen_Semanal_{tambo_nom_real.replace(' ', '_')}.pdf"
+                        
+                        if enviar_correo_productor(email_dest, nombre_prod, tambo_nom_real, pdf_bytes_loop, nom_archivo_pdf, tipo_reporte="semanal"):
+                            enviados_count += 1
+                            
+                    barra.progress((idx + 1) / total_t)
+                    
+                st.success(f"¡Proceso de envío masivo completado! Se enviaron exitosamente {enviados_count} de {total_t} correos.")
 
 except Exception as e:
     st.error("Error en procesamiento:")
