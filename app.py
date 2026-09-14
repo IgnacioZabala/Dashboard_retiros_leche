@@ -186,7 +186,7 @@ def generar_pdf_panel_general(df_macro, periodo_titulo, total_litros, temp_prom,
     return generar_pdf_base('Informe de Recoleccion - Cooperativa', f'Periodo Evaluado: {periodo_titulo}', metricas, headers, df_ranking, mapeo)
 
 def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, args_visibles, es_mensual=False):
-    titulo = 'Resumen mensual de recoleccion' if es_mensual else 'Resumen semanal de recoleccion'
+    titulo = 'Resumen mensual de recoleccion' if es_mensual else 'Resumen semanal de recolección'
     subtitulo = f'Productor: {tambo_nombre} (Codigo #{tambo_id})'
     
     temp_prom = df_productor['Temperatura'].mean()
