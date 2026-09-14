@@ -185,14 +185,14 @@ def generar_pdf_panel_general(df_macro, periodo_titulo, total_litros, temp_prom,
     
     return generar_pdf_base('Informe de Recoleccion - Cooperativa', f'Periodo Evaluado: {periodo_titulo}', metricas, headers, df_ranking, mapeo)
 
-def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, comp_litros, comp_temp, args_visibles, es_mensual=False):
+def generar_pdf_bytes(df_productor, tambo_nombre, tambo_id, periodo_texto, args_visibles, es_mensual=False):
     titulo = 'Resumen mensual de recoleccion' if es_mensual else 'Resumen semanal de recoleccion'
     subtitulo = f'Productor: {tambo_nombre} (Codigo #{tambo_id})'
     
     temp_prom = df_productor['Temperatura'].mean()
     
-    metricas = [f'Periodo: {periodo_texto}', f'Total Litros: {formato_miles(df_productor["Litros_Ticket"].sum())} L {comp_litros}']
-    if args_visibles['temp']: metricas.append(f'Temperatura Promedio: {formato_temp(temp_prom)} {comp_temp}')
+    metricas = [f'Periodo: {periodo_texto}', f'Total Litros: {formato_miles(df_productor["Litros_Ticket"].sum())} L']
+    if args_visibles['temp']: metricas.append(f'Temperatura Promedio: {formato_temp(temp_prom)}')
     
     partes_solidos = []
     if args_visibles['grasa'] and 'Grasa' in df_productor and pd.notna(df_productor['Grasa'].mean()): partes_solidos.append(f"Grasa: {df_productor['Grasa'].mean():.2f}%".replace('.', ','))
@@ -463,20 +463,11 @@ try:
             nom_c = info_c['Contacto_Nombre'].values[0] if not info_c.empty and pd.notna(info_c['Contacto_Nombre'].values[0]) else "Productor"
             
             l_act = df_per['Litros_Ticket'].sum()
-            comp_l, comp_t = "", ""
-            
-            if not es_mensual and st.sidebar.checkbox("Comparativa vs Ant.", True):
-                f_ant = df_per['Fecha_Cierre_Viernes'].iloc[0] - pd.Timedelta(days=7)
-                df_ant = df[(df['Num_Tambo'] == str(t_id)) & (df['Fecha_Cierre_Viernes'] == f_ant)]
-                if not df_ant.empty:
-                    diff_pct = ((l_act - df_ant['Litros_Ticket'].sum()) / df_ant['Litros_Ticket'].sum()) * 100 if df_ant['Litros_Ticket'].sum() > 0 else 0
-                    comp_l = f"({diff_pct:+.1f}%)".replace('.', ',')
-                    comp_t = f"({df_per['Temperatura'].mean() - df_ant['Temperatura'].mean():+.1f}°)".replace('.', ',')
 
             cols = st.columns(1 + sum(args_vis.values()))
-            cols[0].metric("Litros", f"{formato_miles(l_act)} L", delta=comp_l or None)
+            cols[0].metric("Litros", f"{formato_miles(l_act)} L")
             idx = 1
-            if v_temp: cols[idx].metric("Temp. Prom", formato_temp(df_per['Temperatura'].mean()), delta=comp_t or None, delta_color="inverse"); idx += 1
+            if v_temp: cols[idx].metric("Temp. Prom", formato_temp(df_per['Temperatura'].mean())); idx += 1
             if v_grasa: cols[idx].metric("Grasa Prom", f"{df_per['Grasa'].mean():.2f}%".replace('.', ',') if pd.notna(df_per['Grasa'].mean()) else "S/D"); idx += 1
             if v_prot: cols[idx].metric("Prot. Prom", f"{df_per['Proteina'].mean():.2f}%".replace('.', ',') if pd.notna(df_per['Proteina'].mean()) else "S/D"); idx += 1
             if v_crios: cols[idx].metric("Crios Prom", f"{df_per['Crioscopia'].mean():.3f}".replace('.', ',') if pd.notna(df_per['Crioscopia'].mean()) else "S/D"); idx += 1
@@ -504,7 +495,7 @@ try:
             
             st.dataframe(df_disp.rename(columns={'Litros_Ticket': 'Litros', 'N_Remito': 'N° Remito', 'Temperatura': 'Temp'}), hide_index=True, use_container_width=True)
 
-            pdf_b = generar_pdf_bytes(df_per, t_nombre, t_id, periodo_pdf, comp_l, comp_t, args_vis, es_mensual)
+            pdf_b = generar_pdf_bytes(df_per, t_nombre, t_id, periodo_pdf, args_vis, es_mensual)
             nom_arch = f"Resumen_{'Mensual' if es_mensual else 'Semanal'}_{t_nombre.replace(' ', '_')}.pdf"
             
             b1, b2 = st.columns(2)
@@ -527,7 +518,7 @@ try:
                         nc = ic['Contacto_Nombre'].values[0] if not ic.empty and pd.notna(ic['Contacto_Nombre'].values[0]) else "Productor"
                         if em:
                             dft_loop = df[(df['AnioMes'] == mes_sel) & (df['Num_Tambo'] == str(tid))].sort_values(['Fecha', 'N_Remito'])
-                            pdf_loop = generar_pdf_bytes(dft_loop, tnom, tid, periodo_pdf, "", "", {k:True for k in args_vis}, True)
+                            pdf_loop = generar_pdf_bytes(dft_loop, tnom, tid, periodo_pdf, {k:True for k in args_vis}, True)
                             if enviar_correo_productor(em, nc, tnom, pdf_loop, f"Resumen_{tnom.replace(' ', '_')}.pdf", "mensual"): env_ok += 1
                         bar.progress((i + 1) / len(t_unicos))
                     st.success(f"Proceso finalizado: {env_ok} correos enviados.")
@@ -542,7 +533,6 @@ try:
             st.warning("No hay semanas registradas en los datos.")
             st.stop()
             
-        # Por defecto toma el índice 0, que corresponde a la última semana (más reciente) debido al sort_values descendente
         ciclo_masivo = st.selectbox("Seleccione el Cierre de Semana a procesar (por defecto la más reciente):", ciclos_disponibles, index=0)
         
         df_semana_macro = df[df['Ciclo_Semana'] == ciclo_masivo]
@@ -550,7 +540,6 @@ try:
         if df_semana_macro.empty:
             st.info("No hay datos de recolección para la semana seleccionada.")
         else:
-            # Construir tabla de previsualización para auditoría previa al envío
             tramos_agrupados = df_semana_macro.groupby(['Num_Tambo', 'Tambo'], as_index=False).agg(
                 Litros_Totales=('Litros_Ticket', 'sum'),
                 Remitos_Count=('N_Remito', 'count'),
@@ -559,10 +548,8 @@ try:
                 Proteina_Prom=('Proteina', 'mean')
             )
             
-            # Combinar con información de contactos y emails
             df_preview = pd.merge(tramos_agrupados, df_contactos, on='Num_Tambo', how='left')
             
-            # Detección temprana de anomalías / datos erróneos para alertar visualmente
             def detectar_anomalias(row):
                 alertas = []
                 if pd.isna(row['Email']) or not str(row['Email']).strip():
@@ -577,7 +564,6 @@ try:
 
             df_preview['Estado / Alerta'] = df_preview.apply(detectar_anomalias, axis=1)
             
-            # Ordenar columnas para la tabla de control
             df_table_show = df_preview[['Num_Tambo', 'Tambo', 'Contacto_Nombre', 'Email', 'Litros_Totales', 'Remitos_Count', 'Temp_Media', 'Estado / Alerta']].copy()
             df_table_show['Litros_Totales'] = df_table_show['Litros_Totales'].apply(formato_miles)
             df_table_show['Temp_Media'] = df_table_show['Temp_Media'].apply(formato_temp)
@@ -616,7 +602,7 @@ try:
                     
                     if email_dest and "@" in str(email_dest):
                         df_t_loop = df_semana_macro[df_semana_macro['Num_Tambo'] == str(t_id_loop)].sort_values(['Fecha', 'N_Remito'])
-                        pdf_bytes_loop = generar_pdf_bytes(df_t_loop, tambo_nom_real, t_id_loop, periodo_pdf_str, "", "", args_vis_default, es_mensual=False)
+                        pdf_bytes_loop = generar_pdf_bytes(df_t_loop, tambo_nom_real, t_id_loop, periodo_pdf_str, args_vis_default, es_mensual=False)
                         nom_archivo_pdf = f"Resumen_Semanal_{tambo_nom_real.replace(' ', '_')}.pdf"
                         
                         if enviar_correo_productor(email_dest, nombre_prod, tambo_nom_real, pdf_bytes_loop, nom_archivo_pdf, tipo_reporte="semanal"):
