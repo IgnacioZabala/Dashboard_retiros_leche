@@ -567,7 +567,7 @@ try:
                 alertas = []
                 if pd.isna(row['Email']) or not str(row['Email']).strip():
                     alertas.append("⚠️ Falta Email")
-                if row['Temp_Media'] > 10.0:
+                if row['Temp_Media'] > 6.0:
                     alertas.append("🚨 Temp Alta (>10°C)")
                 if row['Litros_Totales'] <= 0:
                     alertas.append("❌ Litros en 0 o negativos")
